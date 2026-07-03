@@ -81,17 +81,6 @@ docker compose up -d
 > `sudo apt-get install -y docker-compose-plugin`. If you only have the older standalone
 > `docker-compose` binary, the hyphenated `docker-compose up -d` works the same way.
 
-> **`docker version` shows a Podman server, or a DNS/network "permission denied" pulling
-> images?** You're likely running this inside a **Proxmox LXC container** (check for a
-> `-pve` kernel: `uname -r`) - either a pre-installed Podman is still holding Docker's
-> socket, or the LXC isn't privileged/nested enough for container networking. Easiest
-> fix: use **Option B** instead on an LXC - it runs directly on the container, no nested
-> container runtime, so neither problem applies. To keep using Docker in an LXC: from the
-> **Proxmox host** (not inside the container) run `pct set <vmid> --features
-> nesting=1,keyctl=1`, make the container privileged, then inside it
-> `systemctl disable --now podman.socket 2>/dev/null && systemctl restart docker`.
-> A fresh LXC (rebuilt without a prior Podman install) can also sidestep this entirely.
-
 Open `http://<server-ip>:8080` in a browser (`http://localhost:8080` if you're on the
 machine itself) to see the admin UI. Log in with the `BOOTSTRAP_ADMIN_*` credentials
 from `.env` and enroll 2FA (mandatory).
