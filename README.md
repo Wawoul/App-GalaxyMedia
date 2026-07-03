@@ -10,9 +10,10 @@ Self-hosted digital signage for MSPs. No per-screen licensing, No "Freemium" - y
   videos (MP4, MOV, WebM, MKV), validated by content sniffing, not file extension -
   playlists (with per-item mute, live web pages), split-screen layouts (presets or
   custom zones) with scrolling tickers, and white-label branding per company.
-- **Scheduling**: drag-on-calendar weekly scheduler with dayparting, overnight windows,
-  bi-weekly/one-off recurrence, priorities, and a "Black Screen" mode that simulates
-  the TV being off. Schedules run on the TV's own clock, so they keep switching offline.
+- **Scheduling**: drag-on-calendar weekly scheduler with dayparting, overnight windows
+  that correctly carry their day-of-week/date restrictions past midnight, bi-weekly/
+  one-off recurrence, priorities, and a "Black Screen" mode that simulates the TV being
+  off. Schedules run on the TV's own clock, so they keep switching offline.
 - **Players**: a native Android TV app (TCL etc.) that caches everything locally
   (checksum-verified), keeps playing through network outages and reboots, and
   self-updates from releases published in the admin - plus a zero-install **web player**
@@ -26,8 +27,9 @@ Self-hosted digital signage for MSPs. No per-screen licensing, No "Freemium" - y
   companies, nightly backups.
 - **Security**: TLS by default (plain-HTTP mode available for trusted LAN-only
   installs), Argon2id + mandatory TOTP 2FA for MSP staff, encrypted secrets
-  at rest, scoped revocable device tokens, signed download URLs, audit log, hardened
-  systemd/nginx/ufw/fail2ban deployment. See [SECURITY.md](SECURITY.md).
+  at rest, scoped revocable device tokens, signed download URLs, rate-limited device
+  pairing, audit log, hardened systemd/nginx/ufw/fail2ban deployment. See
+  [SECURITY.md](SECURITY.md).
 
 ## Components
 
