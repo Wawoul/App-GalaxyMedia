@@ -5,7 +5,9 @@ Self-hosted digital signage for MSPs. No per-screen licensing, No "Freemium" - y
 ## What it does
 
 - **Multi-tenant**: MSP -> companies -> screen groups -> screens, with hard isolation
-  between companies and per-editor company access lists.
+  between companies. Five role levels (MSP admin/editor, company admin/editor/viewer)
+  gate what each user can see and do, with per-editor company access lists for MSP
+  staff who only manage some companies.
 - **Content**: media library with folders - images (JPG, PNG, GIF, WebP, BMP) and
   videos (MP4, MOV, WebM, MKV), validated by content sniffing, not file extension -
   playlists (with per-item mute, live web pages), split-screen layouts (presets or
@@ -20,10 +22,11 @@ Self-hosted digital signage for MSPs. No per-screen licensing, No "Freemium" - y
   (`/player` in any browser) for kiosk PCs, Raspberry Pis, and quick previews.
   Both pair with a 6-character code, and both support software display rotation
   (portrait / flipped) per screen for sideways-mounted menu boards.
-- **Operations**: live dashboard (online/offline, now playing, screenshots on demand,
-  device health - battery, RAM, CPU, WiFi signal, storage, uptime - from Android
-  player heartbeats), offline alerts by email + Telegram (global and per-company
-  recipients), proof-of-play reports with CSV export, config export/import between
+- **Operations**: live dashboard with search/sort/filter (online/offline, now playing,
+  remote reload/identify, screenshots on demand, device health - battery, RAM, CPU,
+  WiFi signal, storage, uptime - from Android player heartbeats), offline alerts by
+  email + Telegram (configurable threshold, global and per-company recipients,
+  test-send), proof-of-play reports with CSV export, config export/import between
   companies, nightly backups.
 - **Security**: TLS by default (plain-HTTP mode available for trusted LAN-only
   installs), Argon2id + mandatory TOTP 2FA for MSP staff, encrypted secrets
