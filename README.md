@@ -51,6 +51,44 @@ Self-hosted digital signage for MSPs. No per-screen licensing, No "Freemium" - y
 See [SPEC.md](SPEC.md) for the full specification and implementation status, and
 [AppBuild.md](AppBuild.md) for a step-by-step walkthrough of building the TV app.
 
+## How it connects
+
+One server you host talks to every screen and every admin - there's no Galaxy Media
+cloud service in the loop.
+
+```mermaid
+flowchart LR
+    subgraph Admins["Admins"]
+        Browser["Browser<br/>MSP + company users"]
+    end
+
+    subgraph Screens["Screens"]
+        Android["Android TV player<br/>offline-first cache"]
+        WebPlayer["Web player<br/>/player, any browser"]
+    end
+
+    subgraph Server["Your server - Docker or Ubuntu VM/LXC"]
+        direction TB
+        Proxy["nginx / Caddy / Cloudflare Tunnel<br/>TLS termination"]
+        API["Galaxy Media API + admin UI<br/>Fastify, :8080"]
+        DB[("PostgreSQL")]
+        Media[("Media on disk")]
+        Proxy --> API
+        API --> DB
+        API --> Media
+    end
+
+    Alerts["Email / Telegram"]
+
+    Browser -- HTTPS --> Proxy
+    Android -- "HTTPS + WebSocket: pair, sync, heartbeat" --> Proxy
+    WebPlayer -- "HTTPS + WebSocket" --> Proxy
+    API -. "offline alert" .-> Alerts
+```
+
+Solid lines are connections screens/admins make into your server; the dashed line is
+an alert your server sends out when a screen goes offline.
+
 ## Install
 
 You need two things: this server somewhere on a network your TVs can reach, and the
