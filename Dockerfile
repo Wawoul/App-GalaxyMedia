@@ -40,6 +40,13 @@ ENV HOST=0.0.0.0 \
     PORT=8080 \
     MEDIA_DIR=/data/media \
     ADMIN_DIR=/app/admin
+# Seed /data as node-owned BEFORE the VOLUME line: Docker copies a path's
+# existing content/ownership into a freshly created named volume the first
+# time it's mounted there, but only if it already exists in the image at
+# that path. Without this, a new volume defaults to root-owned, and the
+# app (below, running as the non-root `node` user) can't write into it -
+# every start fails with EACCES: permission denied, mkdir '/data/media'.
+RUN mkdir -p /data/media && chown -R node:node /data
 VOLUME /data
 EXPOSE 8080
 USER node
