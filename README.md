@@ -56,7 +56,7 @@ See [SPEC.md](SPEC.md) for the full specification and implementation status, and
 You need two things: this server somewhere on a network your TVs can reach, and the
 player APK on the TVs. Pick ONE of the server options below.
 
-### Option A - Docker Compose (easiest)
+### Option A - Docker Compose
 
 Anything that runs Docker: a NAS, a VPS, a VM, a Raspberry Pi 4+.
 
@@ -92,14 +92,17 @@ docker compose up -d
 > `systemctl disable --now podman.socket 2>/dev/null && systemctl restart docker`.
 > A fresh LXC (rebuilt without a prior Podman install) can also sidestep this entirely.
 
-The admin UI and API are now on port 8080 (plain HTTP). Put TLS in front - any of:
+Open `http://<server-ip>:8080` in a browser (`http://localhost:8080` if you're on the
+machine itself) to see the admin UI. Log in with the `BOOTSTRAP_ADMIN_*` credentials
+from `.env` and enroll 2FA (mandatory).
+
+That's plain HTTP, fine for a first look - put TLS in front before using this for real:
 
 - **Caddy / nginx / Traefik** reverse-proxying `localhost:8080` with a Let's Encrypt cert
 - **Cloudflare Tunnel**: public hostname -> `http://<host>:8080` (free trusted TLS, no open ports)
 
 Set `BASE_URL` in `.env` to that public https URL (TVs embed it in download links), then
-`docker compose up -d` again. Log in with the `BOOTSTRAP_ADMIN_*` credentials from `.env`
-and enroll 2FA. Updates: `git pull && docker compose up -d --build`.
+`docker compose up -d` again. Updates: `git pull && docker compose up -d --build`.
 
 Backups in Docker: dump the DB and copy the media volume, e.g.
 `docker compose exec db pg_dump -U galaxy galaxy_media > backup.sql` on a cron.
