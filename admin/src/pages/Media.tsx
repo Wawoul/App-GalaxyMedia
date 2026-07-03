@@ -8,6 +8,22 @@ function formatSize(bytes: number): string {
   return `${Math.round(bytes / 1e3)} KB`;
 }
 
+/** Folder id + every descendant folder id beneath it (incl. itself). */
+function folderSubtree(rootId: string, folders: Folder[]): Set<string> {
+  const ids = new Set([rootId]);
+  let added = true;
+  while (added) {
+    added = false;
+    for (const f of folders) {
+      if (f.parent_id && ids.has(f.parent_id) && !ids.has(f.id)) {
+        ids.add(f.id);
+        added = true;
+      }
+    }
+  }
+  return ids;
+}
+
 export function Media({ company, canEdit }: { company: Company; canEdit: boolean }) {
   const [items, setItems] = useState<MediaItem[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
@@ -170,11 +186,25 @@ export function Media({ company, canEdit }: { company: Company; canEdit: boolean
                           if (confirm(`Delete folder "${f.name}"? Its contents move up a level (nothing is lost).`)) {
                             void run(() => api(`/api/folders/${f.id}`, { method: 'DELETE' }));
                           }
+                        } else if (action === 'delete_recursive') {
+                          const subtree = folderSubtree(f.id, folders);
+                          const mediaCount = items.filter((m) => m.folder_id && subtree.has(m.folder_id)).length;
+                          const folderCount = subtree.size - 1; // exclude f itself
+                          const warning = mediaCount > 0
+                            ? `Permanently delete folder "${f.name}" and everything inside it - ` +
+                              `${mediaCount} file${mediaCount === 1 ? '' : 's'}` +
+                              (folderCount > 0 ? ` across ${folderCount} subfolder${folderCount === 1 ? '' : 's'}` : '') +
+                              `? This cannot be undone.`
+                            : `Delete empty folder "${f.name}" and its ${folderCount} empty subfolder${folderCount === 1 ? '' : 's'}?`;
+                          if (confirm(warning)) {
+                            void run(() => api(`/api/folders/${f.id}?recursive=true`, { method: 'DELETE' }));
+                          }
                         }
                       }}>
                         <option value="" disabled>Actions…</option>
                         <option value="rename">Rename</option>
                         <option value="delete">Delete (keep contents)</option>
+                        <option value="delete_recursive">Delete folder and contents</option>
                       </select>
                     </td>
                   )}

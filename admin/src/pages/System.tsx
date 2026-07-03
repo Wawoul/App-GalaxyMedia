@@ -10,8 +10,39 @@ interface ApkRelease {
   downloadUrl?: string;
 }
 
+interface HostStats {
+  cpuCores: number;
+  loadAvg1: number;
+  loadAvg5: number;
+  loadAvg15: number;
+  memTotalBytes: number;
+  memFreeBytes: number;
+  diskTotalBytes: number;
+  diskFreeBytes: number;
+  osUptimeS: number;
+  nodeVersion: string;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
+  if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(0)} MB`;
+  return `${Math.round(bytes / 1e3)} KB`;
+}
+
+function formatUptime(s: number): string {
+  const days = Math.floor(s / 86400);
+  const hours = Math.floor((s % 86400) / 3600);
+  return days > 0 ? `${days}d ${hours}h` : `${hours}h`;
+}
+
+/** A stat's value turns red once free space drops below 10%. */
+function lowFraction(total: number, free: number): boolean {
+  return total > 0 && free / total < 0.1;
+}
+
 export function System() {
   const [release, setRelease] = useState<ApkRelease | null>(null);
+  const [hostStats, setHostStats] = useState<HostStats | null>(null);
   const [webPlayerEnabled, setWebPlayerEnabled] = useState<boolean | null>(null);
   const [versionCode, setVersionCode] = useState('');
   const [versionName, setVersionName] = useState('');
@@ -28,6 +59,13 @@ export function System() {
     api<{ webPlayerEnabled: boolean }>('/api/system/settings')
       .then((s) => setWebPlayerEnabled(s.webPlayerEnabled))
       .catch(() => setWebPlayerEnabled(false));
+  }, []);
+
+  useEffect(() => {
+    const loadStats = () => void api<HostStats>('/api/system/host-stats').then(setHostStats).catch(() => {});
+    loadStats();
+    const timer = setInterval(loadStats, 15000);
+    return () => clearInterval(timer);
   }, []);
 
   const toggleWebPlayer = async (next: boolean) => {
@@ -63,9 +101,46 @@ export function System() {
     }
   };
 
+  const memUsed = hostStats ? hostStats.memTotalBytes - hostStats.memFreeBytes : 0;
+  const diskUsed = hostStats ? hostStats.diskTotalBytes - hostStats.diskFreeBytes : 0;
+
   return (
     <>
       <h2>System</h2>
+
+      <div className="panel">
+        <strong>Host</strong>
+        {hostStats ? (
+          <div className="row" style={{ marginTop: 8, gap: 32, flexWrap: 'wrap' }}>
+            <div>
+              <div className="muted" style={{ fontSize: 12 }}>CPU load ({hostStats.cpuCores} core{hostStats.cpuCores === 1 ? '' : 's'})</div>
+              <div>{hostStats.loadAvg1.toFixed(2)}, {hostStats.loadAvg5.toFixed(2)}, {hostStats.loadAvg15.toFixed(2)}</div>
+            </div>
+            <div>
+              <div className="muted" style={{ fontSize: 12 }}>Memory</div>
+              <div style={{ color: lowFraction(hostStats.memTotalBytes, hostStats.memFreeBytes) ? 'var(--bad)' : undefined }}>
+                {formatBytes(memUsed)} / {formatBytes(hostStats.memTotalBytes)}
+              </div>
+            </div>
+            <div>
+              <div className="muted" style={{ fontSize: 12 }}>Disk (media volume)</div>
+              <div style={{ color: lowFraction(hostStats.diskTotalBytes, hostStats.diskFreeBytes) ? 'var(--bad)' : undefined }}>
+                {hostStats.diskTotalBytes ? `${formatBytes(diskUsed)} / ${formatBytes(hostStats.diskTotalBytes)}` : ' - '}
+              </div>
+            </div>
+            <div>
+              <div className="muted" style={{ fontSize: 12 }}>Server uptime</div>
+              <div>{formatUptime(hostStats.osUptimeS)}</div>
+            </div>
+            <div>
+              <div className="muted" style={{ fontSize: 12 }}>Node.js</div>
+              <div>{hostStats.nodeVersion}</div>
+            </div>
+          </div>
+        ) : (
+          <div className="muted" style={{ marginTop: 6 }}>Loading…</div>
+        )}
+      </div>
 
       <div className="panel">
         <strong>Player app release (self-update)</strong>

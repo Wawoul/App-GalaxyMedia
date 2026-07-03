@@ -25,9 +25,10 @@ Self-hosted digital signage for MSPs. No per-screen licensing, No "Freemium" - y
 - **Operations**: live dashboard with search/sort/filter (online/offline, now playing,
   remote reload/identify/restart/clear-cache, screenshots on demand, device health -
   battery, RAM, CPU, WiFi signal, storage, uptime - from Android player heartbeats),
-  offline alerts by email + Telegram (configurable threshold, global and per-company
-  recipients, test-send), proof-of-play reports with CSV export, config export/import
-  between companies, nightly backups.
+  host server stats (CPU load, memory, disk space) on the System tab, offline alerts
+  by email + Telegram (configurable threshold, global and per-company recipients,
+  test-send), proof-of-play reports with CSV export, config export/import between
+  companies, nightly backups.
 - **Security**: TLS by default (plain-HTTP mode available for trusted LAN-only
   installs), Argon2id + mandatory TOTP 2FA for MSP staff, encrypted secrets
   at rest, scoped revocable device tokens, signed download URLs, rate-limited device

@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { createHash } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
-import { mkdir, rename, stat, unlink } from 'node:fs/promises';
+import { mkdir, rename, stat, statfs, unlink } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { Transform } from 'node:stream';
@@ -69,6 +70,31 @@ export function systemRoutes(app: FastifyInstance): void {
 
     scope.get('/api/system/settings', async (_req, reply) => {
       return reply.send(await getSystemSettings());
+    });
+
+    // Host resource snapshot for the System tab (CPU/RAM/disk) - Linux only;
+    // os.loadavg() reports zeros on other platforms.
+    scope.get('/api/system/host-stats', async (_req, reply) => {
+      let diskTotalBytes = 0;
+      let diskFreeBytes = 0;
+      try {
+        const disk = await statfs(config.MEDIA_DIR);
+        diskTotalBytes = disk.blocks * disk.bsize;
+        diskFreeBytes = disk.bavail * disk.bsize;
+      } catch {
+        // statfs unsupported on this platform/filesystem - UI shows "-"
+      }
+      const [loadAvg1, loadAvg5, loadAvg15] = os.loadavg();
+      return reply.send({
+        cpuCores: os.cpus().length,
+        loadAvg1, loadAvg5, loadAvg15,
+        memTotalBytes: os.totalmem(),
+        memFreeBytes: os.freemem(),
+        diskTotalBytes,
+        diskFreeBytes,
+        osUptimeS: os.uptime(),
+        nodeVersion: process.version,
+      });
     });
 
     scope.put('/api/system/settings', async (req, reply) => {

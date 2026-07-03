@@ -7,7 +7,7 @@ import { pipeline } from 'node:stream/promises';
 import { Transform } from 'node:stream';
 import { z } from 'zod';
 import { config, SIGNED_URL_TTL_S } from '../config.js';
-import { query } from '../db/pool.js';
+import { query, withTransaction } from '../db/pool.js';
 import { audit } from '../lib/audit.js';
 import { signDownload, verifyDownload } from '../lib/crypto.js';
 import { canAccessCompany } from '../lib/permissions.js';
@@ -125,19 +125,58 @@ export function mediaRoutes(app: FastifyInstance): void {
     // Delete a folder: contents (media + subfolders) move up to its parent.
     scope.delete('/api/folders/:id', async (req, reply) => {
       const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+      const { recursive } = z.object({ recursive: z.enum(['true', 'false']).optional() }).parse(req.query);
       const { rows } = await query<{ company_id: string; parent_id: string | null }>(
         'SELECT company_id, parent_id FROM media_folders WHERE id = $1',
         [id],
       );
       if (!rows[0]) return reply.code(404).send({ error: 'not_found' });
-      if (!canAccessCompany(req.principal!, rows[0].company_id, 'editor')) {
+      const companyId = rows[0].company_id;
+      if (!canAccessCompany(req.principal!, companyId, 'editor')) {
         return reply.code(403).send({ error: 'forbidden' });
       }
+
+      if (recursive === 'true') {
+        // Permanently delete the folder, every subfolder beneath it, and every
+        // media file inside any of them (not just moved up - actually gone).
+        const { rows: subtree } = await query<{ id: string }>(
+          `WITH RECURSIVE subtree AS (
+             SELECT id FROM media_folders WHERE id = $1
+             UNION ALL
+             SELECT f.id FROM media_folders f JOIN subtree s ON f.parent_id = s.id
+           )
+           SELECT id FROM subtree`,
+          [id],
+        );
+        const folderIds = subtree.map((f) => f.id);
+        const { rows: mediaRows } = await query<{ id: string; mime: string }>(
+          'SELECT id, mime FROM media WHERE folder_id = ANY($1::uuid[])',
+          [folderIds],
+        );
+        for (const m of mediaRows) {
+          await unlink(mediaPath(companyId, m.id, extFromMime(m.mime))).catch(() => {});
+        }
+        await withTransaction(async (tx) => {
+          await tx.query('DELETE FROM media WHERE folder_id = ANY($1::uuid[])', [folderIds]);
+          await tx.query('DELETE FROM media_folders WHERE id = ANY($1::uuid[])', [folderIds]);
+        });
+        audit({
+          userId: req.principal!.id,
+          companyId,
+          action: 'folder.delete_recursive',
+          entityId: id,
+          ip: req.ip,
+          detail: { foldersDeleted: folderIds.length, mediaDeleted: mediaRows.length },
+        });
+        notifyCompany(companyId, { type: 'sync' }); // playlists referencing deleted media need to refresh
+        return reply.send({ ok: true, foldersDeleted: folderIds.length, mediaDeleted: mediaRows.length });
+      }
+
       const parent = rows[0].parent_id;
       await query('UPDATE media SET folder_id = $2 WHERE folder_id = $1', [id, parent]);
       await query('UPDATE media_folders SET parent_id = $2 WHERE parent_id = $1', [id, parent]);
       await query('DELETE FROM media_folders WHERE id = $1', [id]);
-      audit({ userId: req.principal!.id, companyId: rows[0].company_id, action: 'folder.delete', entityId: id, ip: req.ip });
+      audit({ userId: req.principal!.id, companyId, action: 'folder.delete', entityId: id, ip: req.ip });
       return reply.send({ ok: true });
     });
 

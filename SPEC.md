@@ -138,8 +138,11 @@ MSP (platform owner)
 
 ## 7. Monitoring & MSP dashboard
 
-- Dashboard: all screens (filter by company/group), online/offline, last heartbeat, current
-  content, app version, thumbnail of last screenshot.
+- Dashboard: all screens (search/sort/filter by group), online/offline, last heartbeat,
+  current content, app version, thumbnail of last screenshot.
+- **Host stats**: the System tab (MSP admin only) shows the server's own CPU load,
+  memory, and disk space (statfs on the media volume) - separate from per-screen
+  device health, this is "is the server itself about to run out of room."
 - **Offline alerts**: screen offline > N minutes → email (SMTP settings in admin) - MSPs sell
   uptime, this is core, not optional.
 - Basic **proof-of-play log** (what played where, daily rollups) - phase 2 if time-boxed.
