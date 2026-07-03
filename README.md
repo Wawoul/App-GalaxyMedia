@@ -61,7 +61,7 @@ player APK on the TVs. Pick ONE of the server options below.
 Anything that runs Docker: a NAS, a VPS, a VM, a Raspberry Pi 4+.
 
 ```bash
-git clone <this-repo> && cd <this-repo>
+git clone https://github.com/Wawoul/App-GalaxyMedia.git && cd App-GalaxyMedia
 cp .env.example .env
 # edit .env: set BASE_URL and generate the three secrets
 #   openssl rand -hex 24   -> DB_PASSWORD
@@ -93,7 +93,7 @@ backup, which hardlinks unchanged media so it costs one extra copy, not seven).
 fleets should size accordingly:
 
 ```bash
-git clone <this-repo> && cd <this-repo>
+git clone https://github.com/Wawoul/App-GalaxyMedia.git && cd App-GalaxyMedia
 sudo bash deploy/install.sh
 ```
 
