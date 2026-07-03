@@ -70,6 +70,14 @@ cp .env.example .env
 docker compose up -d
 ```
 
+> **`unknown shorthand flag: 'd' in -d`?** Your Docker install is missing the Compose
+> plugin (common on a bare `docker.io` apt package) - `docker` doesn't recognize
+> `compose` as a subcommand at all, so it tries to parse the rest as legacy top-level
+> flags. Fix: `sudo apt-get update && sudo apt-get install -y docker-compose-plugin`,
+> then retry. If that package isn't available, use the official install script instead:
+> `curl -fsSL https://get.docker.com | sudo sh`. (If you only have the older standalone
+> `docker-compose` binary, the hyphenated `docker-compose up -d` works the same way.)
+
 The admin UI and API are now on port 8080 (plain HTTP). Put TLS in front - any of:
 
 - **Caddy / nginx / Traefik** reverse-proxying `localhost:8080` with a Let's Encrypt cert
