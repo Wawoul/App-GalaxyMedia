@@ -107,7 +107,10 @@ export function Alerts() {
 
       <div className="panel">
         <strong>Email (SMTP)</strong>
-        <div className="row" style={{ marginTop: 10 }}>
+        {/* flex-start, not the site-wide center default: the password field grows an
+            extra "Remove saved password" line once one is set, which would otherwise
+            vertically re-center every field in the row and misalign them */}
+        <div className="row" style={{ marginTop: 10, alignItems: 'flex-start' }}>
           <label style={field}>
             <span className="muted">SMTP host</span>
             <input value={settings.smtpHost} placeholder="smtp.example.com"
@@ -158,7 +161,7 @@ export function Alerts() {
           {' '}<code>api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</code> in a browser, and copy the
           {' '}<code>chat.id</code> value into the Chat ID field.
         </div>
-        <div className="row">
+        <div className="row" style={{ alignItems: 'flex-start' }}>
           <label style={field}>
             <span className="muted">Bot token {settings.telegramTokenSet && '(saved - blank keeps it)'}</span>
             <input type="password" value={telegramToken}

@@ -12,6 +12,15 @@ const ROLE_LABELS: Record<string, string> = {
 
 type SortKey = 'name' | 'email' | 'role' | 'status';
 
+/** One-time reset password: unambiguous alphabet (no 0/O/1/l/I) so it's easy to
+ * read aloud or retype, well above the server's 12-char minimum. */
+function generateTempPassword(length = 16): string {
+  const alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+  const bytes = new Uint8Array(length);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => alphabet[b % alphabet.length]).join('');
+}
+
 export function Users({ me, companies }: { me: Me; companies: Company[] }) {
   const [users, setUsers] = useState<User[]>([]);
   const [error, setError] = useState('');
@@ -229,6 +238,19 @@ export function Users({ me, companies }: { me: Me; companies: Company[] }) {
                             }
                           }}>
                           Reset 2FA
+                        </button>
+                        <button className="secondary"
+                          onClick={async () => {
+                            if (!confirm(`Reset ${u.email}'s password? A new temporary password is generated ` +
+                              `and shown once here - you'll need to share it with them yourself.`)) {
+                              return;
+                            }
+                            const temp = generateTempPassword();
+                            await run(() => api(`/api/users/${u.id}`, { method: 'PATCH', body: { password: temp } }));
+                            alert(`New temporary password for ${u.email}:\n\n${temp}\n\n` +
+                              `This won't be shown again - copy it now and have them sign in and change it.`);
+                          }}>
+                          Reset password
                         </button>
                         <button className="secondary"
                           onClick={() => run(() => api(`/api/users/${u.id}`, { method: 'PATCH', body: { disabled: !u.disabled } }))}>
