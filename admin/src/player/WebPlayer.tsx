@@ -73,7 +73,7 @@ function orientationStyle(deg: number): React.CSSProperties {
 
 const TOKEN_KEY = 'gm_device_token';
 const MANIFEST_KEY = 'gm_manifest';
-const VERSION = 'web-1.1.0';
+const VERSION = `web-${__APP_VERSION__}`;
 
 const isStream = (url: string) => {
   const path = url.split('?')[0]!.toLowerCase();

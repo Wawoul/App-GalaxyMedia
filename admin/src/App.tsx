@@ -56,10 +56,11 @@ export function App() {
     <div className="layout">
       <nav className="sidebar">
         {me.level === 'company' && company?.brand_name ? (
-          <div className="brand">{company.brand_name}</div>
+          <div className="brand" style={{ marginBottom: 4 }}>{company.brand_name}</div>
         ) : (
-          <div className="brand">Galaxy <span>Media</span></div>
+          <div className="brand" style={{ marginBottom: 4 }}>Galaxy <span>Media</span></div>
         )}
+        <div className="muted" style={{ fontSize: 11, marginBottom: 14 }}>v{__APP_VERSION__}</div>
         {companies.length > 0 && (
           <>
             <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>Working in company</div>
