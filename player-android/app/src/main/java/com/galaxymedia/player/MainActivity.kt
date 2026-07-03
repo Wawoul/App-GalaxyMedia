@@ -52,8 +52,10 @@ class MainActivity : AppCompatActivity() {
     // this before firing so a stale attempt from a destroyed/superseded
     // instance (e.g. the "restart" command's recreate()) can't reconnect a
     // second, duplicate socket behind the new instance's back.
-    private var wsGeneration = 0
-    private var wsFailureCount = 0
+    // Written from the main thread (connectWebSocket/onDestroy) and OkHttp's
+    // callback thread (onOpen/onFailure) - @Volatile for a correct read/write.
+    @Volatile private var wsGeneration = 0
+    @Volatile private var wsFailureCount = 0
     private var currentItem: String? = null
     private var isPlaying = false
     private var activePlaylistId: String? = null
