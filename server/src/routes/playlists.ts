@@ -184,6 +184,9 @@ export function playlistRoutes(app: FastifyInstance): void {
       .refine((b) => b.weekInterval === 1 || !!b.startDate, {
         message: 'recurrence intervals need a startDate anchor',
       })
+      .refine((b) => !b.startDate || !b.endDate || b.startDate <= b.endDate, {
+        message: 'endDate must not be before startDate',
+      })
       .refine((b) => Number(!!b.playlistId) + Number(!!b.layoutId) + Number(b.blackout) === 1, {
         message: 'exactly one of playlistId/layoutId/blackout',
       })
@@ -254,6 +257,9 @@ export function playlistRoutes(app: FastifyInstance): void {
       })
       .refine((b) => b.weekInterval === 1 || !!b.startDate, {
         message: 'recurrence intervals need a startDate anchor',
+      })
+      .refine((b) => !b.startDate || !b.endDate || b.startDate <= b.endDate, {
+        message: 'endDate must not be before startDate',
       })
       .parse(req.body);
 

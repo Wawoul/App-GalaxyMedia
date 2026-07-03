@@ -51,7 +51,11 @@ data class HeartbeatPayload(
 @Serializable
 data class ManifestItem(
     val id: String,
-    val type: String, // "image" | "video" | "url"
+    // Defaulted, not just documented as required: a missing/unexpected value
+    // for one item would otherwise fail decodeFromString for the WHOLE
+    // manifest, discarding every other valid schedule/item along with it.
+    // PlaybackEngine's `when (item.type)` already has an `else -> skip` arm.
+    val type: String = "", // "image" | "video" | "url"
     val name: String? = null,
     val url: String? = null,
     val mediaId: String? = null,

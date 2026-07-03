@@ -29,6 +29,8 @@ private const val POLL_FALLBACK_MS = 60_000L
 private const val CONNECT_RETRY_DELAY_MS = 10_000L
 private const val CONNECT_RETRY_SLOW_MS = 60_000L // background cadence after the fast attempts are exhausted
 private const val MAX_CONNECT_ATTEMPTS = 5 // fast retries before dropping to the slow background cadence
+private const val WS_RECONNECT_BASE_MS = 15_000L
+private const val WS_RECONNECT_MAX_MS = 120_000L // caps a down server from being hammered every 15s for hours
 
 class MainActivity : AppCompatActivity() {
     private lateinit var prefs: Prefs
@@ -46,6 +48,12 @@ class MainActivity : AppCompatActivity() {
     private var syncJob: Job? = null
     private var scheduleJob: Job? = null
     private var pairingJob: Job? = null
+    // Bumped on every connectWebSocket() call; a scheduled reconnect checks
+    // this before firing so a stale attempt from a destroyed/superseded
+    // instance (e.g. the "restart" command's recreate()) can't reconnect a
+    // second, duplicate socket behind the new instance's back.
+    private var wsGeneration = 0
+    private var wsFailureCount = 0
     private var currentItem: String? = null
     private var isPlaying = false
     private var activePlaylistId: String? = null
@@ -393,7 +401,12 @@ class MainActivity : AppCompatActivity() {
     private fun connectWebSocket() {
         webSocket?.cancel()
         if (prefs.deviceToken == null) return
+        val generation = ++wsGeneration
         webSocket = api.openWebSocket(object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: okhttp3.Response) {
+                wsFailureCount = 0
+            }
+
             override fun onMessage(webSocket: WebSocket, text: String) {
                 val message = runCatching { JSONObject(text) }.getOrNull() ?: return
                 runOnUiThread {
@@ -419,8 +432,14 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: okhttp3.Response?) {
-                // Reconnect with delay; polling in the sync loop covers the gap.
-                root.postDelayed({ connectWebSocket() }, 15_000)
+                // Stale callback from a superseded connection (recreate(), or a
+                // newer connectWebSocket() already replaced this one) - drop it.
+                if (generation != wsGeneration) return
+                wsFailureCount++
+                // Backoff instead of hammering a down server forever; polling in
+                // the sync loop covers the gap either way.
+                val delayMs = (WS_RECONNECT_BASE_MS * wsFailureCount).coerceAtMost(WS_RECONNECT_MAX_MS)
+                root.postDelayed({ if (generation == wsGeneration) connectWebSocket() }, delayMs)
             }
         })
     }
@@ -471,7 +490,15 @@ class MainActivity : AppCompatActivity() {
                     // Free the ~33MB-at-4K capture BEFORE the (possibly slow) upload,
                     // so stacked screenshot commands can't OOM a small TV box.
                     bitmap.recycle()
-                    if (jpeg != null) runCatching { api.uploadScreenshot(jpeg) }
+                    if (jpeg != null) {
+                        try {
+                            api.uploadScreenshot(jpeg)
+                        } catch (e: RevokedException) {
+                            runOnUiThread { onUnpaired() }
+                        } catch (_: Exception) {
+                            // offline/server hiccup - the next screenshot command retries
+                        }
+                    }
                 }
             }, android.os.Handler(mainLooper))
         }.onFailure {
@@ -510,6 +537,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        wsGeneration++ // invalidate any reconnect already scheduled via postDelayed
         engine.release()
         webSocket?.cancel()
         super.onDestroy()

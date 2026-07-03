@@ -99,6 +99,7 @@ class ApiClient(private val prefs: Prefs) {
                 .post(jpeg.toRequestBody("image/jpeg".toMediaType())),
         ).build()
         http.newCall(request).execute().use { response ->
+            if (response.code == 401) throw RevokedException()
             check(response.isSuccessful) { "screenshot ${response.code}" }
         }
     }

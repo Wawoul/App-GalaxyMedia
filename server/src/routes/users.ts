@@ -144,15 +144,11 @@ export function userRoutes(app: FastifyInstance): void {
     if (id === p.id && (body.disabled || body.role)) {
       return reply.code(400).send({ error: 'cannot_change_self' });
     }
-    if (body.role !== undefined) {
-      if (target.level === 'msp' && body.role === 'viewer') {
-        return reply.code(400).send({ error: 'msp_users_cannot_be_viewers' });
-      }
-      await query('UPDATE users SET role = $2 WHERE id = $1', [id, body.role]);
-      // Promoting an msp editor to admin makes the access list irrelevant; clear it.
-      if (target.level === 'msp' && body.role === 'admin') {
-        await query('DELETE FROM user_company_access WHERE user_id = $1', [id]);
-      }
+    // Validate every sub-operation BEFORE mutating anything: a request with
+    // several fields must not partially apply (e.g. a role change committing
+    // even though the companyId move in the same request gets rejected).
+    if (body.role !== undefined && target.level === 'msp' && body.role === 'viewer') {
+      return reply.code(400).send({ error: 'msp_users_cannot_be_viewers' });
     }
     if (body.companyId !== undefined) {
       // Only MSP admins move users between companies, and only company-level users.
@@ -160,31 +156,42 @@ export function userRoutes(app: FastifyInstance): void {
       if (target.level !== 'company') return reply.code(400).send({ error: 'not_a_company_user' });
       const { rowCount } = await query('SELECT 1 FROM companies WHERE id = $1', [body.companyId]);
       if (!rowCount) return reply.code(400).send({ error: 'company_not_found' });
-      await query('UPDATE users SET company_id = $2 WHERE id = $1', [id, body.companyId]);
-      await query('UPDATE refresh_tokens SET revoked = true WHERE user_id = $1', [id]);
     }
 
-    if (body.displayName !== undefined) {
-      await query('UPDATE users SET display_name = $2 WHERE id = $1', [id, body.displayName]);
-    }
-    if (body.disabled !== undefined) {
-      await query('UPDATE users SET disabled = $2 WHERE id = $1', [id, body.disabled]);
-      if (body.disabled) {
-        await query('UPDATE refresh_tokens SET revoked = true WHERE user_id = $1', [id]);
+    await withTransaction(async (tx) => {
+      if (body.role !== undefined) {
+        await tx.query('UPDATE users SET role = $2 WHERE id = $1', [id, body.role]);
+        // Promoting an msp editor to admin makes the access list irrelevant; clear it.
+        if (target.level === 'msp' && body.role === 'admin') {
+          await tx.query('DELETE FROM user_company_access WHERE user_id = $1', [id]);
+        }
       }
-    }
-    if (body.password !== undefined) {
-      const hash = await argon2.hash(body.password, { type: argon2.argon2id });
-      await query('UPDATE users SET password_hash = $2 WHERE id = $1', [id, hash]);
-      await query('UPDATE refresh_tokens SET revoked = true WHERE user_id = $1', [id]);
-    }
-    if (body.resetTotp) {
-      await query(
-        `UPDATE users SET totp_enabled = false, totp_secret_enc = NULL, recovery_codes = '{}' WHERE id = $1`,
-        [id],
-      );
-      await query('UPDATE refresh_tokens SET revoked = true WHERE user_id = $1', [id]);
-    }
+      if (body.companyId !== undefined) {
+        await tx.query('UPDATE users SET company_id = $2 WHERE id = $1', [id, body.companyId]);
+        await tx.query('UPDATE refresh_tokens SET revoked = true WHERE user_id = $1', [id]);
+      }
+      if (body.displayName !== undefined) {
+        await tx.query('UPDATE users SET display_name = $2 WHERE id = $1', [id, body.displayName]);
+      }
+      if (body.disabled !== undefined) {
+        await tx.query('UPDATE users SET disabled = $2 WHERE id = $1', [id, body.disabled]);
+        if (body.disabled) {
+          await tx.query('UPDATE refresh_tokens SET revoked = true WHERE user_id = $1', [id]);
+        }
+      }
+      if (body.password !== undefined) {
+        const hash = await argon2.hash(body.password, { type: argon2.argon2id });
+        await tx.query('UPDATE users SET password_hash = $2 WHERE id = $1', [id, hash]);
+        await tx.query('UPDATE refresh_tokens SET revoked = true WHERE user_id = $1', [id]);
+      }
+      if (body.resetTotp) {
+        await tx.query(
+          `UPDATE users SET totp_enabled = false, totp_secret_enc = NULL, recovery_codes = '{}' WHERE id = $1`,
+          [id],
+        );
+        await tx.query('UPDATE refresh_tokens SET revoked = true WHERE user_id = $1', [id]);
+      }
+    });
     audit({
       userId: p.id,
       action: 'user.update',

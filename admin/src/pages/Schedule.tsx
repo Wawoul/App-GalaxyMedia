@@ -46,12 +46,17 @@ interface Draft {
 /** Existing assignment -> pre-filled dialog state. */
 function draftFromAssignment(a: Assignment): Draft {
   const oneOff = !!a.start_date && a.start_date.slice(0, 10) === a.end_date?.slice(0, 10);
-  const endMin = toMin(a.end_time!.slice(0, 5));
+  const startMin = toMin(a.start_time!.slice(0, 5));
+  const rawEndMin = toMin(a.end_time!.slice(0, 5));
+  // Any overnight slot (not just one ending exactly at midnight) needs the
+  // +24h so the editor's "end > start" invariant holds - otherwise every
+  // overnight assignment loads with Save permanently disabled.
+  const endMin = rawEndMin <= startMin ? rawEndMin + 24 * 60 : rawEndMin;
   return {
     id: a.id,
     days: a.days_of_week?.length ? a.days_of_week : [0, 1, 2, 3, 4, 5, 6],
-    startMin: toMin(a.start_time!.slice(0, 5)),
-    endMin: endMin === 0 ? 24 * 60 : endMin,
+    startMin,
+    endMin,
     playlistId: a.blackout || (!a.playlist_id && !a.layout_id)
       ? BLACKOUT
       : a.layout_id
@@ -287,8 +292,15 @@ export function Schedule({ company, canEdit }: { company: Company; canEdit: bool
                     {Array.from({ length: 24 }, (_, h) => (
                       <div key={h} className="cal-hour-line" style={{ top: h * PX_PER_HOUR }} />
                     ))}
-                    {blocksFor(day).map(({ a, startMin, endMin }, i) => (
-                      <div key={`${a.id}-${i}`} className="cal-block"
+                    {blocksFor(day).map(({ a, startMin, endMin }, i) => {
+                      // The calendar shows one generic recurring week, with no
+                      // "which week" concept - a biweekly/dated assignment can't
+                      // be rendered as "active" or not for a specific week here,
+                      // so at least flag that it doesn't run every week, instead
+                      // of looking identical to a plain always-on block.
+                      const notEveryWeek = a.week_interval > 1 || !!a.start_date || !!a.end_date;
+                      return (
+                      <div key={`${a.id}-${i}`} className={`cal-block${notEveryWeek ? ' cal-block-limited' : ''}`}
                         style={{
                           top: (startMin / 60) * PX_PER_HOUR,
                           height: Math.max(14, ((endMin - startMin) / 60) * PX_PER_HOUR - 2),
@@ -297,14 +309,17 @@ export function Schedule({ company, canEdit }: { company: Company; canEdit: bool
                         title={`${a.playlist_name} · ${a.start_time!.slice(0, 5)}-${a.end_time!.slice(0, 5)}${
                           a.week_interval > 1 ? ` · every ${a.week_interval} weeks` : ''
                         }${a.start_date && a.start_date === a.end_date ? ` · one-off ${a.start_date.slice(0, 10)}` : ''}${
+                          a.start_date && a.start_date !== a.end_date ? ` · from ${a.start_date.slice(0, 10)}` : ''
+                        }${a.end_date && a.start_date !== a.end_date ? ` to ${a.end_date.slice(0, 10)}` : ''}${
                           a.priority >= 100 ? ' · takeover' : a.priority >= 20 ? ' · high' : ''
-                        }${canEdit ? ' - click to edit' : ''}`}
+                        }${canEdit ? ' - click to edit' : ''}${notEveryWeek ? ' (not every week - striped)' : ''}`}
                         onMouseDown={(e) => e.stopPropagation()}
                         onClick={() => canEdit && setDraft(draftFromAssignment(a))}>
                         <span>{a.playlist_name}</span>
                         <span className="cal-block-time">{a.start_time!.slice(0, 5)}-{a.end_time!.slice(0, 5)}</span>
                       </div>
-                    ))}
+                      );
+                    })}
                     {dragPreview?.day === day && (
                       <div className="cal-block cal-drag"
                         style={{

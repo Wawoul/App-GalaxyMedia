@@ -32,6 +32,27 @@ const zonesSchema = z.object({
     )
     .min(1)
     .max(6)
+    .refine(
+      (zones) => {
+        // Pairwise AABB overlap check (a small epsilon tolerates zones that
+        // just touch edge-to-edge, matching the edge-extension tolerance
+        // above) - otherwise nothing stops two zones being stacked on the
+        // same area with no way to tell from the admin which one plays.
+        const EPS = 0.001;
+        for (let i = 0; i < zones.length; i++) {
+          for (let j = i + 1; j < zones.length; j++) {
+            const a = zones[i]!;
+            const b = zones[j]!;
+            const overlaps =
+              a.x + a.w > b.x + EPS && b.x + b.w > a.x + EPS &&
+              a.y + a.h > b.y + EPS && b.y + b.h > a.y + EPS;
+            if (overlaps) return false;
+          }
+        }
+        return true;
+      },
+      { message: 'zones must not overlap' },
+    )
     .nullish(),
 });
 

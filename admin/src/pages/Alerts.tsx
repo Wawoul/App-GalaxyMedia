@@ -17,6 +17,10 @@ export function Alerts() {
   const [settings, setSettings] = useState<AlertSettingsView | null>(null);
   const [smtpPass, setSmtpPass] = useState(''); // write-only; blank = unchanged
   const [telegramToken, setTelegramToken] = useState('');
+  // A blank field always means "leave it alone" (the server can't tell blank
+  // from untouched) - these are the only way to actually remove a saved secret.
+  const [clearSmtpPass, setClearSmtpPass] = useState(false);
+  const [clearTelegramToken, setClearTelegramToken] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -42,10 +46,10 @@ export function Alerts() {
           smtpHost: settings.smtpHost,
           smtpPort: settings.smtpPort,
           smtpUser: settings.smtpUser,
-          smtpPass: smtpPass || null, // null = keep stored secret
+          smtpPass: clearSmtpPass ? '' : smtpPass || null, // null = keep, '' = clear
           smtpFrom: settings.smtpFrom,
           alertEmails: settings.alertEmails,
-          telegramToken: telegramToken || null,
+          telegramToken: clearTelegramToken ? '' : telegramToken || null,
           telegramChatId: settings.telegramChatId,
           offlineAlertMinutes: settings.offlineAlertMinutes,
         },
@@ -53,6 +57,8 @@ export function Alerts() {
       setStatus('Saved.');
       setSmtpPass('');
       setTelegramToken('');
+      setClearSmtpPass(false);
+      setClearTelegramToken(false);
       setSettings(await api<AlertSettingsView>('/api/settings/alerts'));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'save failed');
@@ -119,7 +125,15 @@ export function Alerts() {
           <label style={field}>
             <span className="muted">Password {settings.smtpPassSet && '(saved - blank keeps it)'}</span>
             <input type="password" value={smtpPass} placeholder={settings.smtpPassSet ? '••••••••' : ''}
+              disabled={clearSmtpPass}
               onChange={(e) => setSmtpPass(e.target.value)} />
+            {settings.smtpPassSet && (
+              <label className="muted" style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12 }}>
+                <input type="checkbox" checked={clearSmtpPass}
+                  onChange={(e) => { setClearSmtpPass(e.target.checked); if (e.target.checked) setSmtpPass(''); }} />
+                Remove saved password
+              </label>
+            )}
           </label>
         </div>
         <div className="row" style={{ marginTop: 10 }}>
@@ -149,7 +163,15 @@ export function Alerts() {
             <span className="muted">Bot token {settings.telegramTokenSet && '(saved - blank keeps it)'}</span>
             <input type="password" value={telegramToken}
               placeholder={settings.telegramTokenSet ? '••••••••' : '123456:ABC-…'}
+              disabled={clearTelegramToken}
               onChange={(e) => setTelegramToken(e.target.value)} style={{ minWidth: 260 }} />
+            {settings.telegramTokenSet && (
+              <label className="muted" style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12 }}>
+                <input type="checkbox" checked={clearTelegramToken}
+                  onChange={(e) => { setClearTelegramToken(e.target.checked); if (e.target.checked) setTelegramToken(''); }} />
+                Remove saved token
+              </label>
+            )}
           </label>
           <label style={field}>
             <span className="muted">Chat ID</span>

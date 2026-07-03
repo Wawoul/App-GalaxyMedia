@@ -82,6 +82,13 @@ th { color: var(--muted); font-weight: 600; }
   display: flex; flex-direction: column; line-height: 1.25;
 }
 .cal-block:hover { filter: brightness(1.15); }
+/* Biweekly/dated assignments don't run every week - the calendar has no
+   week-navigator, so this is the only cue that "shown" != "active this week". */
+.cal-block-limited {
+  background-image: repeating-linear-gradient(
+    45deg, rgba(255,255,255,0.22) 0 6px, transparent 6px 12px
+  ) !important;
+}
 .cal-block-time { opacity: 0.85; font-size: 10px; }
 .cal-drag { background: var(--accent); opacity: 0.7; cursor: crosshair; z-index: 2; }
 
