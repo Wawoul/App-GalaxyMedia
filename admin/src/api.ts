@@ -16,7 +16,14 @@ export function clearSession(): void {
   localStorage.removeItem('gm_refresh');
 }
 
-async function tryRefresh(): Promise<boolean> {
+// Pages fire parallel requests (Promise.all) that can all 401 at once when the
+// access token expires. Without sharing one in-flight refresh, two calls would
+// race on the same stored refresh token; if the server rotates it on use, the
+// second call's response invalidates what the first just stored, wiping out a
+// perfectly valid new session.
+let refreshInFlight: Promise<boolean> | null = null;
+
+async function doRefresh(): Promise<boolean> {
   const refreshToken = getRefreshToken();
   if (!refreshToken) return false;
   const res = await fetch('/api/auth/refresh', {
@@ -31,6 +38,15 @@ async function tryRefresh(): Promise<boolean> {
   const data = (await res.json()) as { accessToken: string; refreshToken: string };
   setSession(data.accessToken, data.refreshToken);
   return true;
+}
+
+function tryRefresh(): Promise<boolean> {
+  if (!refreshInFlight) {
+    refreshInFlight = doRefresh().finally(() => {
+      refreshInFlight = null;
+    });
+  }
+  return refreshInFlight;
 }
 
 export class ApiError extends Error {

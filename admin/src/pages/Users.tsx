@@ -22,15 +22,19 @@ export function Users({ me, companies }: { me: Me; companies: Company[] }) {
   const [roleFilter, setRoleFilter] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('name');
   const [sortAsc, setSortAsc] = useState(true);
+  const isMspAdmin = me.level === 'msp' && me.role === 'admin';
+
   // create form
   const [email, setEmail] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [password, setPassword] = useState('');
-  const [roleKey, setRoleKey] = useState('msp:editor');
+  // Must start as an option a company admin's own dropdown actually has
+  // (roleOptions below excludes msp:* for them) - otherwise the <select>
+  // shows its first option while roleKey silently stays 'msp:editor',
+  // submitting the wrong level/role if they never touch the dropdown.
+  const [roleKey, setRoleKey] = useState(isMspAdmin ? 'msp:editor' : 'company:admin');
   const [companyId, setCompanyId] = useState('');
   const [access, setAccess] = useState<string[]>([]);
-
-  const isMspAdmin = me.level === 'msp' && me.role === 'admin';
 
   const load = useCallback(async () => {
     setUsers(await api<User[]>('/api/users'));

@@ -1,6 +1,6 @@
 # Galaxy Media
 
-Self-hosted digital signage for MSPs. No per-screen licensing - your server, your screens.
+Self-hosted digital signage for MSPs. No per-screen licensing, No "Freemium" - your server, your screens.
 
 ## What it does
 

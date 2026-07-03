@@ -47,11 +47,19 @@ export function randomToken(bytes = 32): string {
 
 // Pairing codes avoid ambiguous characters (0/O, 1/I/L).
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+// Largest multiple of the alphabet length that fits in a byte, so rejecting
+// bytes at or above it removes the modulo bias (256 % 31 = 8, so bytes 0-7
+// would otherwise be drawn from 9 values each vs 8 for the rest).
+const REJECT_ABOVE = 256 - (256 % CODE_ALPHABET.length);
 
 export function generatePairingCode(length = 6): string {
-  const bytes = randomBytes(length);
   let code = '';
-  for (const b of bytes) code += CODE_ALPHABET[b % CODE_ALPHABET.length];
+  while (code.length < length) {
+    for (const b of randomBytes(length - code.length)) {
+      if (b >= REJECT_ABOVE) continue; // biased range - redraw
+      code += CODE_ALPHABET[b % CODE_ALPHABET.length];
+    }
+  }
   return code;
 }
 

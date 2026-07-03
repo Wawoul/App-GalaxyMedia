@@ -24,7 +24,11 @@ export function audit(entry: AuditEntry): void {
       entry.ip ?? null,
       entry.detail ? JSON.stringify(entry.detail) : null,
     ],
-  ).catch(() => {
-    /* logged elsewhere; never throw from audit */
+  ).catch((err: unknown) => {
+    // Never let a broken audit write break the request it's logging - but a
+    // silently dropped entry (e.g. under pool exhaustion) shouldn't vanish
+    // without a trace, since this is the compliance/security trail.
+    // eslint-disable-next-line no-console
+    console.error('audit write failed', entry.action, err);
   });
 }

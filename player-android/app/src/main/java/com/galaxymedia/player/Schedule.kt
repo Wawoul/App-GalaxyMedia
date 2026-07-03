@@ -12,12 +12,23 @@ import java.time.ZonedDateTime
 object Schedule {
 
     fun isActive(entry: ScheduleEntry, now: ZonedDateTime): Boolean {
-        val date = now.toLocalDate()
+        val start = entry.startTime
+        val end = entry.endTime
+        val minutes = now.toLocalTime().hour * 60 + now.toLocalTime().minute
+        val startMin = start?.let { parseMinutes(it) } ?: 0
+        val endMin = end?.let { parseMinutes(it) } ?: 0
+        val overnight = start != null && end != null && startMin > endMin
+        // The early-morning tail of an overnight window (e.g. 00:30 for a
+        // 22:00-02:00 slot) still belongs to the PREVIOUS calendar day's
+        // date/days-of-week/interval - mirrors lib/schedule.ts.
+        val inOvernightTail = overnight && minutes < endMin
+        val date = if (inOvernightTail) now.toLocalDate().minusDays(1) else now.toLocalDate()
+        val dow = if (inOvernightTail) (now.dayOfWeek.value % 7 + 6) % 7 else now.dayOfWeek.value % 7
+
         entry.startDate?.let { if (date.isBefore(LocalDate.parse(it))) return false }
         entry.endDate?.let { if (date.isAfter(LocalDate.parse(it))) return false }
 
         entry.daysOfWeek?.takeIf { it.isNotEmpty() }?.let { days ->
-            val dow = now.dayOfWeek.value % 7 // java.time: Mon=1..Sun=7 → 0=Sun..6=Sat
             if (dow !in days) return false
         }
 
@@ -27,13 +38,8 @@ object Schedule {
             if (days >= 0 && (days / 7) % entry.weekInterval != 0L) return false
         }
 
-        val start = entry.startTime
-        val end = entry.endTime
         if (start != null && end != null) {
-            val minutes = now.toLocalTime().hour * 60 + now.toLocalTime().minute
-            val startMin = parseMinutes(start)
-            val endMin = parseMinutes(end)
-            if (startMin <= endMin) {
+            if (!overnight) {
                 if (minutes < startMin || minutes >= endMin) return false
             } else {
                 // Window crosses midnight (e.g. 22:00-02:00).

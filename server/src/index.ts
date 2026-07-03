@@ -29,7 +29,11 @@ async function main(): Promise<void> {
 
   const app = Fastify({
     logger: { level: config.NODE_ENV === 'production' ? 'info' : 'debug' },
-    trustProxy: true, // nginx in front
+    // Trust exactly one hop (nginx on localhost). `true` would trust the whole
+    // XFF chain and take the client-supplied leftmost entry as req.ip, which
+    // nginx's `$proxy_add_x_forwarded_for` (append, not replace) lets a client
+    // spoof - defeating IP-based rate limits like the pairing-code guard.
+    trustProxy: 1,
     bodyLimit: 1024 * 1024, // JSON bodies; uploads go through multipart limits
   });
 

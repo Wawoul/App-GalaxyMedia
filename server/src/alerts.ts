@@ -121,7 +121,10 @@ export async function sendAlert(
 
 async function checkOfflineScreens(): Promise<void> {
   const s = await getAlertSettings();
-  const anyChannel = (s.smtpHost && s.alertEmails) || (s.telegramTokenEnc && s.telegramChatId);
+  // A company relying solely on its own alert_emails (set in the Companies tab,
+  // with no global recipients) is a supported config - only require the SMTP
+  // host to be set, not the global address list, or that path never fires.
+  const anyChannel = s.smtpHost || (s.telegramTokenEnc && s.telegramChatId);
   if (!anyChannel) return;
 
   const { rows } = await query<{

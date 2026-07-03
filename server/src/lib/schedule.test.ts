@@ -46,6 +46,23 @@ describe('isActive', () => {
     expect(isActive(late, monday9am)).toBe(false);
   });
 
+  it('an overnight window restricted to one day of week keeps playing past midnight', () => {
+    // Monday-only 22:00-02:00: still active at 1am Tuesday (the tail end of
+    // Monday night), but not at 1am Wednesday (a plain night off).
+    const mondayNight = entry({ startTime: '22:00', endTime: '02:00', daysOfWeek: [1] });
+    expect(isActive(mondayNight, { dateStr: '2026-07-06', dayOfWeek: 1, minutes: 23 * 60 })).toBe(true); // Mon 11pm
+    expect(isActive(mondayNight, { dateStr: '2026-07-07', dayOfWeek: 2, minutes: 60 })).toBe(true); // Tue 1am
+    expect(isActive(mondayNight, { dateStr: '2026-07-08', dayOfWeek: 3, minutes: 60 })).toBe(false); // Wed 1am
+    expect(isActive(mondayNight, { dateStr: '2026-07-07', dayOfWeek: 2, minutes: 23 * 60 })).toBe(false); // Tue 11pm
+  });
+
+  it('an overnight window respects a one-off end date past midnight', () => {
+    // A single Friday-night slot: still counts as "Friday" at 1am Saturday.
+    const fridayOnly = entry({ startTime: '22:00', endTime: '02:00', startDate: '2026-07-10', endDate: '2026-07-10' });
+    expect(isActive(fridayOnly, { dateStr: '2026-07-11', dayOfWeek: 6, minutes: 60 })).toBe(true); // Sat 1am
+    expect(isActive(fridayOnly, { dateStr: '2026-07-12', dayOfWeek: 0, minutes: 60 })).toBe(false); // Sun 1am
+  });
+
   it('bi-weekly: active on anchor week, off the next, on again', () => {
     // Anchor Monday 2026-07-06; monday9am is that same day → week 0 (active).
     const biweekly = entry({ weekInterval: 2, startDate: '2026-07-06', daysOfWeek: [1] });
