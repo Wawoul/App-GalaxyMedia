@@ -1,0 +1,8 @@
+[Unit]
+Description=Galaxy Media nightly backup
+
+[Service]
+Type=oneshot
+ExecStart=/opt/galaxy-media/deploy/backup.sh
+Nice=10
+IOSchedulingClass=idle

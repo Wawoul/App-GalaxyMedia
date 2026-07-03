@@ -1,0 +1,8 @@
+**/node_modules
+**/dist
+player-android
+.git
+deets.md
+.env
+*.md
+!README.md

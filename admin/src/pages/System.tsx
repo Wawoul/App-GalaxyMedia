@@ -1,0 +1,145 @@
+import { useEffect, useRef, useState } from 'react';
+import { api, uploadWithProgress } from '../api';
+
+interface ApkRelease {
+  versionCode: number;
+  versionName: string;
+  sha256: string;
+  sizeBytes: number;
+  uploadedAt: string;
+  downloadUrl?: string;
+}
+
+export function System() {
+  const [release, setRelease] = useState<ApkRelease | null>(null);
+  const [webPlayerEnabled, setWebPlayerEnabled] = useState<boolean | null>(null);
+  const [versionCode, setVersionCode] = useState('');
+  const [versionName, setVersionName] = useState('');
+  const [progress, setProgress] = useState<number | null>(null);
+  const [status, setStatus] = useState('');
+  const [error, setError] = useState('');
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    api<ApkRelease | null>('/api/system/apk')
+      .then(setRelease)
+      .catch((err) => setError(err instanceof Error ? err.message : 'failed'));
+    api<{ webPlayerEnabled: boolean }>('/api/system/settings')
+      .then((s) => setWebPlayerEnabled(s.webPlayerEnabled))
+      .catch(() => setWebPlayerEnabled(false));
+  }, []);
+
+  const toggleWebPlayer = async (next: boolean) => {
+    setWebPlayerEnabled(next); // optimistic
+    try {
+      await api('/api/system/settings', { method: 'PUT', body: { webPlayerEnabled: next } });
+    } catch (err) {
+      setWebPlayerEnabled(!next);
+      setError(err instanceof Error ? err.message : 'failed');
+    }
+  };
+
+  const upload = async () => {
+    const file = fileInput.current?.files?.[0];
+    if (!file) return;
+    setError('');
+    setStatus('');
+    try {
+      await uploadWithProgress('/api/system/apk', file, setProgress, {
+        versionCode,
+        versionName,
+      });
+      setStatus('Release published. TVs pick it up on their next update check (within ~6 hours), or use Reload on a screen to hurry one along.');
+      setRelease(await api<ApkRelease | null>('/api/system/apk'));
+      setVersionCode('');
+      setVersionName('');
+      if (fileInput.current) fileInput.current.value = '';
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'upload failed');
+    } finally {
+      setProgress(null);
+    }
+  };
+
+  return (
+    <>
+      <h2>System</h2>
+
+      <div className="panel">
+        <strong>Player app release (self-update)</strong>
+        <div className="muted" style={{ margin: '6px 0 12px' }}>
+          Upload a signed release APK and every paired TV offers/installs the update itself.
+          Version code must be higher than what the TVs run (it is in
+          player-android/app/build.gradle.kts, bump it each release). The TV verifies the
+          file hash and the Android system verifies the signature before installing.
+        </div>
+        {release ? (
+          <div className="row" style={{ marginBottom: 12 }}>
+            <span className="muted">
+              Current release: <strong style={{ color: 'var(--text)' }}>v{release.versionName}</strong>
+              {' '}(code {release.versionCode}, {(release.sizeBytes / 1e6).toFixed(1)} MB,
+              uploaded {new Date(release.uploadedAt).toLocaleString()})
+            </span>
+            {release.downloadUrl && (
+              <a href={release.downloadUrl} download={`galaxy-player-v${release.versionName}.apk`}>
+                <button className="secondary" type="button">Download APK</button>
+              </a>
+            )}
+          </div>
+        ) : (
+          <div className="muted" style={{ marginBottom: 12 }}>
+            No release uploaded yet - publish one below and a <strong>Download APK</strong> button
+            will appear here for grabbing it onto new TVs.
+          </div>
+        )}
+        <div className="muted" style={{ marginBottom: 12, fontSize: 13 }}>
+          The download link is also how you get the APK onto brand-new TVs (USB stick or adb) -
+          after that first install, updates flow automatically.
+        </div>
+        <div className="row">
+          <input ref={fileInput} type="file" accept=".apk" />
+          <input placeholder="Version code (e.g. 2)" value={versionCode} style={{ width: 150 }}
+            onChange={(e) => setVersionCode(e.target.value.replace(/\D/g, ''))} />
+          <input placeholder="Version name (e.g. 0.2.0)" value={versionName} style={{ width: 150 }}
+            onChange={(e) => setVersionName(e.target.value)} />
+          <button onClick={upload} disabled={!versionCode || !versionName || progress !== null}>
+            Publish release
+          </button>
+          {progress !== null && (
+            <div className="row">
+              <progress value={progress} max={100} style={{ width: 120 }} />
+              <span className="muted">{progress}%</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {status && <div className="panel muted">{status}</div>}
+      {error && <div className="error">{error}</div>}
+
+      <div className="panel">
+        <strong>Web player</strong>
+        <div className="muted" style={{ margin: '6px 0 10px' }}>
+          The browser-based player at <code>/player</code> lets any kiosk-mode browser
+          (PC, Raspberry Pi) pair like a TV. Off by default; when disabled the page refuses
+          to run and cannot request pairing codes. Existing web players stop at their next check.
+        </div>
+        <label className="row" style={{ gap: 8, cursor: 'pointer' }}>
+          <input type="checkbox" checked={webPlayerEnabled ?? false}
+            disabled={webPlayerEnabled === null}
+            onChange={(e) => void toggleWebPlayer(e.target.checked)} />
+          Enable the web player
+        </label>
+      </div>
+
+      <div className="panel">
+        <strong>Backups</strong>
+        <div className="muted" style={{ marginTop: 6 }}>
+          The server runs a nightly backup at 03:30 (database, media, config) to
+          /var/backups/galaxy-media, keeping 7 days. Copy that directory offsite for real
+          disaster recovery. Check status: <code>systemctl status galaxy-backup.timer</code>
+        </div>
+      </div>
+    </>
+  );
+}

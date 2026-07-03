@@ -1,0 +1,10 @@
+[Unit]
+Description=Galaxy Media nightly backup at 03:30
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

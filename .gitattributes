@@ -1,2 +1,8 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# Everything the toolchain consumes must stay LF, including on Windows checkouts - # shell scripts, systemd units, and configs break with CRLF.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.webp binary
+*.mp4 binary
+*.jks binary
+*.keystore binary

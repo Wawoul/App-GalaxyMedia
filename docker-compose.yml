@@ -1,0 +1,46 @@
+# Galaxy Media - easiest install. See README.md for the full walkthrough.
+#
+#   cp .env.example .env    # then fill in the secrets
+#   docker compose up -d
+#
+# The app listens on port 8080 (HTTP). Put TLS in front of it (Caddy, nginx,
+# Traefik, or a Cloudflare Tunnel) and set BASE_URL to that public URL.
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: galaxy
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      POSTGRES_DB: galaxy_media
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U galaxy -d galaxy_media"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgres://galaxy:${DB_PASSWORD}@db:5432/galaxy_media
+      BASE_URL: ${BASE_URL:?set BASE_URL in .env}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY in .env}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-512}
+    volumes:
+      - media-data:/data
+
+volumes:
+  db-data:
+  media-data:

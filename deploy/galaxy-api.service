@@ -1,0 +1,36 @@
+[Unit]
+Description=Galaxy Media API server
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=galaxy
+Group=galaxy
+EnvironmentFile=/etc/galaxy-media/config.env
+Environment=NODE_ENV=production
+WorkingDirectory=/opt/galaxy-media/server
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=3
+
+# Hardening (SPEC §8)
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=no
+RestrictRealtime=yes
+SystemCallFilter=@system-service
+CapabilityBoundingSet=
+ReadWritePaths=/var/lib/galaxy-media
+
+[Install]
+WantedBy=multi-user.target

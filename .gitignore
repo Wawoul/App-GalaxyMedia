@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+
+# Builds
+dist/
+build/
+*.tsbuildinfo
+
+# Environment / secrets - never commit real config
+.env
+.env.*
+!.env.example
+config.env
+!config.env.example
+deets.md
+
+# Runtime data
+media-data/
+*.log
+
+# Android
+player-android/.gradle/
+player-android/local.properties
+player-android/app/build/
+player-android/build/
+*.apk
+*.keystore
+*.jks
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local tool settings (may contain hostnames/IPs)
+.claude/
