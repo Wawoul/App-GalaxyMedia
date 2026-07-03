@@ -61,6 +61,8 @@ player APK on the TVs. Pick ONE of the server options below.
 Anything that runs Docker: a NAS, a VPS, a VM, a Raspberry Pi 4+.
 
 ```bash
+sudo apt update && sudo apt upgrade -y   # new machine: pick up security patches first
+sudo apt install -y git                  # skip if `git --version` already works
 git clone https://github.com/Wawoul/App-GalaxyMedia.git && cd App-GalaxyMedia
 cp .env.example .env
 # edit .env: set BASE_URL and generate the three secrets
@@ -101,6 +103,8 @@ backup, which hardlinks unchanged media so it costs one extra copy, not seven).
 fleets should size accordingly:
 
 ```bash
+sudo apt update && sudo apt upgrade -y   # new machine: pick up security patches first
+sudo apt install -y git                  # skip if `git --version` already works
 git clone https://github.com/Wawoul/App-GalaxyMedia.git && cd App-GalaxyMedia
 sudo bash deploy/install.sh
 ```
