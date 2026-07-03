@@ -74,6 +74,13 @@ cp .env.example .env
 docker compose up -d
 ```
 
+Check it actually started before opening a browser:
+
+```bash
+docker compose ps                    # both containers should show "Up" (db: "healthy")
+curl localhost:8080/api/health       # should print {"ok":true}
+```
+
 > **`unknown shorthand flag: 'd' in -d`?** Something already provided a `docker` command
 > without the Compose plugin (common with a distro's own `docker.io` package) - it doesn't
 > recognize `compose` as a subcommand at all, so it tries to parse the rest as legacy
