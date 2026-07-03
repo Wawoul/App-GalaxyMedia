@@ -17,7 +17,7 @@ import { layoutRoutes } from './routes/layouts.js';
 import { mediaRoutes } from './routes/media.js';
 import { playlistRoutes } from './routes/playlists.js';
 import { reportRoutes } from './routes/reports.js';
-import { screenRoutes } from './routes/screens.js';
+import { screenRoutes, screenshotRoute } from './routes/screens.js';
 import { settingsRoutes } from './routes/settings.js';
 import { systemRoutes } from './routes/system.js';
 import { transferRoutes } from './routes/transfer.js';
@@ -92,6 +92,7 @@ async function main(): Promise<void> {
   systemRoutes(app);
   mediaRoutes(app);
   deviceRoutes(app);
+  screenshotRoute(app); // token-in-query auth; must stay outside screenRoutes' requireUser scope
 
   startAlertLoop(app.log);
   await app.listen({ host: config.HOST, port: config.PORT });

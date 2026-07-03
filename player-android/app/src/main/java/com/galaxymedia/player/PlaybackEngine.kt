@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.text.TextUtils
 import android.view.Gravity
+import android.view.LayoutInflater
 import android.view.View
 import android.webkit.WebView
 import android.widget.FrameLayout
@@ -46,7 +47,11 @@ private class ZonePlayer(
         visibility = View.GONE
     }
     private val exoPlayer = ExoPlayer.Builder(context).build()
-    private val playerView = PlayerView(context).apply {
+    // Inflated (not constructed) so surface_type=texture_view applies - see
+    // res/layout/zone_player_view.xml for why screenshots need TextureView.
+    private val playerView = (
+        LayoutInflater.from(context).inflate(R.layout.zone_player_view, container, false) as PlayerView
+        ).apply {
         layoutParams = match
         useController = false
         player = exoPlayer

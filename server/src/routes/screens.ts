@@ -11,6 +11,23 @@ import { signDeviceToken } from '../lib/tokens.js';
 import { getApkRelease } from './system.js';
 import { notifyScreen } from '../ws.js';
 
+/**
+ * Latest support screenshot. Registered OUTSIDE screenRoutes' requireUser scope:
+ * the browser loads this in an <img>, which cannot send an Authorization header,
+ * so auth is the signed expiring token in the query string (like media files).
+ */
+export function screenshotRoute(app: FastifyInstance): void {
+  app.get('/api/screens/:id/screenshot', async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const { token } = z.object({ token: z.string() }).parse(req.query);
+    if (!verifyDownload(`shot-${id}`, token)) return reply.code(401).send({ error: 'invalid_token' });
+    return reply
+      .header('content-type', 'image/jpeg')
+      .header('cache-control', 'no-store')
+      .sendFile(`screenshots/${id}.jpg`);
+  });
+}
+
 export function screenRoutes(app: FastifyInstance): void {
   app.addHook('preHandler', requireUser);
 
@@ -282,17 +299,6 @@ export function screenRoutes(app: FastifyInstance): void {
     await query('DELETE FROM screens WHERE id = $1', [id]);
     audit({ userId: req.principal!.id, companyId: rows[0].company_id, action: 'screen.delete', entityId: id, ip: req.ip });
     return reply.send({ ok: true });
-  });
-
-  // Latest support screenshot (signed URL so it renders in an <img>).
-  app.get('/api/screens/:id/screenshot', async (req, reply) => {
-    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
-    const { token } = z.object({ token: z.string() }).parse(req.query);
-    if (!verifyDownload(`shot-${id}`, token)) return reply.code(401).send({ error: 'invalid_token' });
-    return reply
-      .header('content-type', 'image/jpeg')
-      .header('cache-control', 'no-store')
-      .sendFile(`screenshots/${id}.jpg`);
   });
 
   // Remote commands: reload | identify | restart | clear_cache | screenshot | update
