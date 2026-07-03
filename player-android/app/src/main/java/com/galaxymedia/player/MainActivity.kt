@@ -15,6 +15,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.updateLayoutParams
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -422,24 +423,46 @@ class MainActivity : AppCompatActivity() {
         // Window dimensions, not root's: applyOrientation() swaps root to h×w on
         // rotated screens, which would squash the copied window surface.
         val decor = window.decorView
-        val bitmap = android.graphics.Bitmap.createBitmap(
-            decor.width.coerceAtLeast(1), decor.height.coerceAtLeast(1),
-            android.graphics.Bitmap.Config.ARGB_8888,
-        )
-        android.view.PixelCopy.request(window, bitmap, { result ->
-            if (result == android.view.PixelCopy.SUCCESS) {
-                lifecycleScope.launch {
-                    runCatching {
-                        val out = java.io.ByteArrayOutputStream()
-                        bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, out)
-                        api.uploadScreenshot(out.toByteArray())
+        val bitmap = runCatching {
+            android.graphics.Bitmap.createBitmap(
+                decor.width.coerceAtLeast(1), decor.height.coerceAtLeast(1),
+                android.graphics.Bitmap.Config.ARGB_8888,
+            )
+        }.getOrNull() ?: return
+
+        // PixelCopy can throw synchronously on some device/GPU-driver combinations
+        // (e.g. the window not being in a copyable state) - never let a screenshot
+        // request crash the whole app.
+        runCatching {
+            android.view.PixelCopy.request(window, bitmap, { result ->
+                if (result == android.view.PixelCopy.SUCCESS) {
+                    // Off the main thread: compressing a full-resolution (up to 4K)
+                    // capture is slow enough to ANR a cheap TV box otherwise.
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        runCatching {
+                            val maxDim = 1280
+                            val scale = (maxDim.toFloat() / maxOf(bitmap.width, bitmap.height)).coerceAtMost(1f)
+                            val toUpload = if (scale < 1f) {
+                                android.graphics.Bitmap.createScaledBitmap(
+                                    bitmap, (bitmap.width * scale).toInt(), (bitmap.height * scale).toInt(), true,
+                                )
+                            } else {
+                                bitmap
+                            }
+                            val out = java.io.ByteArrayOutputStream()
+                            toUpload.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, out)
+                            if (toUpload !== bitmap) toUpload.recycle()
+                            api.uploadScreenshot(out.toByteArray())
+                        }
+                        bitmap.recycle()
                     }
+                } else {
                     bitmap.recycle()
                 }
-            } else {
-                bitmap.recycle()
-            }
-        }, android.os.Handler(mainLooper))
+            }, android.os.Handler(mainLooper))
+        }.onFailure {
+            bitmap.recycle()
+        }
     }
 
     private fun identify() {

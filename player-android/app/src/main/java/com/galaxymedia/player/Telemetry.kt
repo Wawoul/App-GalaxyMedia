@@ -2,6 +2,8 @@ package com.galaxymedia.player
 
 import android.app.ActivityManager
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.net.wifi.WifiManager
 import android.os.BatteryManager
 import android.os.Process
@@ -40,11 +42,21 @@ class Telemetry(private val context: Context) {
     }
 
     private fun batteryPct(): Int? = runCatching {
+        // Many cheap Android TV boxes are reflashed phone/tablet vendor images
+        // whose battery HAL never got stripped - instead of omitting it, it
+        // reports a fixed fake reading (50% is the single most common one).
+        // A plain "is it in 1..100" range check can't catch that, so cross-check
+        // that the device actually declares having a battery at all first.
+        if (!hasBattery()) return@runCatching null
         val bm = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
         val pct = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
-        // TVs and boxes without a battery report 0 or Integer.MIN_VALUE.
         pct.takeIf { it in 1..100 }
     }.getOrNull()
+
+    private fun hasBattery(): Boolean {
+        val sticky = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        return sticky?.getBooleanExtra(BatteryManager.EXTRA_PRESENT, false) ?: false
+    }
 
     private fun memory(): Pair<Int, Int>? = runCatching {
         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
