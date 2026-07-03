@@ -31,4 +31,9 @@ fi
 # 4. Rotate
 find "$BACKUP_DIR" -maxdepth 1 -mindepth 1 -type d -mtime +"$KEEP_DAYS" -exec rm -rf {} +
 
+# 5. Readable marker for the System tab's "Last backup" stat: the backup dir
+# itself is root-only (0700), so the API (running as galaxy) can't inspect it.
+date -u +"%Y-%m-%dT%H:%M:%SZ" > /var/lib/galaxy-media/media/.last-backup
+chown galaxy:galaxy /var/lib/galaxy-media/media/.last-backup
+
 echo "backup complete: $DEST ($(du -sh "$DEST" | cut -f1))"

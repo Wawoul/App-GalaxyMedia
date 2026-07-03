@@ -22,6 +22,7 @@ interface HostStats {
   diskUsedBytes: number;
   osUptimeS: number;
   nodeVersion: string;
+  lastBackupAt: string | null;
 }
 
 function formatBytes(bytes: number): string {
@@ -115,7 +116,11 @@ export function System() {
           <div className="row" style={{ marginTop: 8, gap: 32, flexWrap: 'wrap' }}>
             <div>
               <div className="muted" style={{ fontSize: 12 }}>CPU load ({hostStats.cpuCores} core{hostStats.cpuCores === 1 ? '' : 's'})</div>
-              <div>{hostStats.loadAvg1.toFixed(2)}, {hostStats.loadAvg5.toFixed(2)}, {hostStats.loadAvg15.toFixed(2)}</div>
+              {/* 1-min load average over core count; can exceed 100% when overloaded */}
+              {(() => {
+                const pct = Math.round((hostStats.loadAvg1 / Math.max(hostStats.cpuCores, 1)) * 100);
+                return <div style={{ color: pct >= 90 ? 'var(--bad)' : undefined }}>{pct}%</div>;
+              })()}
             </div>
             <div>
               <div className="muted" style={{ fontSize: 12 }}>Memory</div>
@@ -136,6 +141,16 @@ export function System() {
             <div>
               <div className="muted" style={{ fontSize: 12 }}>Node.js</div>
               <div>{hostStats.nodeVersion}</div>
+            </div>
+            <div>
+              <div className="muted" style={{ fontSize: 12 }}>Last backup</div>
+              {/* red once a nightly run has been missed (>26h) */}
+              <div style={{
+                color: hostStats.lastBackupAt && Date.now() - Date.parse(hostStats.lastBackupAt) > 26 * 3600_000
+                  ? 'var(--bad)' : undefined,
+              }}>
+                {hostStats.lastBackupAt ? new Date(hostStats.lastBackupAt).toLocaleString() : ' - '}
+              </div>
             </div>
           </div>
         ) : (

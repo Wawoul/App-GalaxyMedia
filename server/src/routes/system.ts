@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { createHash } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
-import { mkdir, rename, stat, statfs, unlink } from 'node:fs/promises';
+import { mkdir, readFile, rename, stat, statfs, unlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
@@ -88,6 +88,15 @@ export function systemRoutes(app: FastifyInstance): void {
       } catch {
         // statfs unsupported on this platform/filesystem - UI shows "-"
       }
+      // Written by deploy/backup.sh after each nightly run (the backup dir
+      // itself is root-only, so this marker is how the API learns about it).
+      let lastBackupAt: string | null = null;
+      try {
+        const marker = (await readFile(path.join(config.MEDIA_DIR, '.last-backup'), 'utf8')).trim();
+        if (!Number.isNaN(Date.parse(marker))) lastBackupAt = marker;
+      } catch {
+        // No backup has run yet (or Docker install without the timer) - UI shows "-"
+      }
       const [loadAvg1, loadAvg5, loadAvg15] = os.loadavg();
       return reply.send({
         cpuCores: os.cpus().length,
@@ -99,6 +108,7 @@ export function systemRoutes(app: FastifyInstance): void {
         diskUsedBytes,
         osUptimeS: os.uptime(),
         nodeVersion: process.version,
+        lastBackupAt,
       });
     });
 
