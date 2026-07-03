@@ -2,6 +2,8 @@
 
 Self-hosted digital signage for MSPs. No per-screen licensing, No "Freemium" - your server, your screens.
 
+![Screens tab: live status, device health, screenshots, and remote actions](screenshots/WebPortal.png)
+
 ## What it does
 
 - **Multi-tenant**: MSP -> companies -> screen groups -> screens, with hard isolation
