@@ -1,9 +1,13 @@
 package com.galaxymedia.player
 
 import android.os.Bundle
+import android.text.InputType
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
+import android.view.inputmethod.EditorInfo
+import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -111,13 +115,22 @@ class MainActivity : AppCompatActivity() {
         val input = EditText(this).apply {
             hint = "https://…"
             setText("https://")
+            // Plain EditText defaults to multi-line, so Enter just inserts "\n"
+            // instead of submitting - force single-line with a "Go" IME action.
+            setSingleLine(true)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            imeOptions = EditorInfo.IME_ACTION_GO
+        }
+        val connectButton = Button(this).apply {
+            text = "Connect"
         }
         column.addView(label)
         column.addView(input)
+        column.addView(connectButton)
         statusView.visibility = View.GONE
         root.addView(column)
 
-        input.setOnEditorActionListener { _, _, _ ->
+        fun submit() {
             val url = input.text.toString().trim()
             if (url.startsWith("http")) {
                 prefs.serverUrl = url
@@ -125,8 +138,22 @@ class MainActivity : AppCompatActivity() {
                 statusView.visibility = View.VISIBLE
                 startPairing()
             }
-            true
         }
+
+        input.setOnEditorActionListener { _, _, _ -> submit(); true }
+        // Backup path: some TV remotes/keyboards send a raw Enter key event
+        // instead of (or in addition to) the IME action above.
+        input.setOnKeyListener { _, keyCode, event ->
+            if (event.action == KeyEvent.ACTION_DOWN &&
+                (keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER)
+            ) {
+                submit()
+                true
+            } else {
+                false
+            }
+        }
+        connectButton.setOnClickListener { submit() }
     }
 
     // ── Pairing: show the code, poll until an admin claims it ────────────────
