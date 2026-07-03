@@ -134,15 +134,19 @@ class MainActivity : AppCompatActivity() {
             )
         }
         val label = TextView(this).apply {
-            text = "Galaxy Media - server URL (e.g. https://signage.example.com)"
+            text = "Galaxy Media - server URL\n" +
+                "LAN install: http://192.168.x.x:8080  ·  Public domain: https://signage.example.com"
             textSize = 22f
             setTextColor(-1)
             gravity = Gravity.CENTER
         }
         cancelButton.visibility = View.GONE
         val input = EditText(this).apply {
-            hint = "https://…"
-            setText(prefs.serverUrl ?: "https://") // keep whatever was last tried, so a typo is easy to fix
+            hint = "http:// or https://…"
+            // No scheme pre-filled: a LAN install is plain http:// only (no cert), and
+            // defaulting this field to "https://" meant LAN users kept it unedited and
+            // got a silent, endlessly-retried TLS handshake failure against a plaintext server.
+            setText(prefs.serverUrl ?: "") // keep whatever was last tried, so a typo is easy to fix
             // Plain EditText defaults to multi-line, so Enter just inserts "\n"
             // instead of submitting - force single-line with a "Go" IME action.
             setSingleLine(true)
@@ -223,17 +227,23 @@ class MainActivity : AppCompatActivity() {
                     }
                 } catch (e: Exception) {
                     failedAttempts++
+                    // A failed TLS handshake against a plaintext LAN server (https:// typed
+                    // for a http://-only install) looks like this, not a generic timeout -
+                    // worth calling out since the fix is "change the scheme", not "wait".
+                    val sslHint = if (e is javax.net.ssl.SSLException) {
+                        "\nLooks like a TLS/SSL error - if this is a LAN install, use http:// not https://."
+                    } else ""
                     if (failedAttempts >= MAX_CONNECT_ATTEMPTS) {
                         // Likely a bad address - stop the fast loop and tell the user.
                         // But KEEP retrying slowly in the background: an unpaired TV
                         // rebooting after a power cut (router still coming up) must
                         // self-recover with no one holding a remote (SPEC §6).
-                        statusView.text = "Cannot reach server\n${prefs.serverUrl}\n\n" +
+                        statusView.text = "Cannot reach server\n${prefs.serverUrl}$sslHint\n\n" +
                             "Still trying in the background - check the address if this persists."
                         cancelButton.text = "Change server"
                         delay(CONNECT_RETRY_SLOW_MS)
                     } else {
-                        statusView.text = "Cannot reach server\n${prefs.serverUrl}\n" +
+                        statusView.text = "Cannot reach server\n${prefs.serverUrl}$sslHint\n" +
                             "Retrying… ($failedAttempts/$MAX_CONNECT_ATTEMPTS)"
                         delay(CONNECT_RETRY_DELAY_MS)
                     }
