@@ -134,11 +134,18 @@ class MainActivity : AppCompatActivity() {
             )
         }
         val label = TextView(this).apply {
-            text = "Galaxy Media - server URL\n" +
-                "LAN install: http://192.168.x.x:8080  ·  Public domain: https://signage.example.com"
+            text = "Galaxy Media - server URL"
             textSize = 22f
             setTextColor(-1)
             gravity = Gravity.CENTER
+        }
+        val hintLabel = TextView(this).apply {
+            text = "LAN install: http://192.168.x.x:8080\n" +
+                "Public domain: https://signage.example.com"
+            textSize = 14f
+            setTextColor(-1)
+            gravity = Gravity.CENTER
+            setPadding(0, 12, 0, 0)
         }
         cancelButton.visibility = View.GONE
         val input = EditText(this).apply {
@@ -157,6 +164,7 @@ class MainActivity : AppCompatActivity() {
             text = "Connect"
         }
         column.addView(label)
+        column.addView(hintLabel)
         column.addView(input)
         column.addView(connectButton)
         statusView.visibility = View.GONE
