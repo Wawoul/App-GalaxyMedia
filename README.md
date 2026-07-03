@@ -63,10 +63,11 @@ Anything that runs Docker: a NAS, a VPS, a VM, a Raspberry Pi 4+.
 ```bash
 sudo apt update && sudo apt upgrade -y   # new machine: pick up security patches first
 sudo apt install -y git                  # skip if `git --version` already works
+sudo apt install curl                    # skip if `curl --version` already works
 curl -fsSL https://get.docker.com | sudo sh   # skip if `docker compose version` already works
 git clone https://github.com/Wawoul/App-GalaxyMedia.git && cd App-GalaxyMedia
 cp .env.example .env
-# edit .env: set BASE_URL and generate the three secrets
+# edit .env: set BASE_URL and generate the three secrets (nano .env)
 #   openssl rand -hex 24   -> DB_PASSWORD
 #   openssl rand -hex 48   -> JWT_SECRET
 #   openssl rand -hex 32   -> ENCRYPTION_KEY
@@ -79,6 +80,17 @@ docker compose up -d
 > top-level flags. Fix: re-run the `get.docker.com` install line above, or
 > `sudo apt-get install -y docker-compose-plugin`. If you only have the older standalone
 > `docker-compose` binary, the hyphenated `docker-compose up -d` works the same way.
+
+> **`docker version` shows a Podman server, or a DNS/network "permission denied" pulling
+> images?** You're likely running this inside a **Proxmox LXC container** (check for a
+> `-pve` kernel: `uname -r`) - either a pre-installed Podman is still holding Docker's
+> socket, or the LXC isn't privileged/nested enough for container networking. Easiest
+> fix: use **Option B** instead on an LXC - it runs directly on the container, no nested
+> container runtime, so neither problem applies. To keep using Docker in an LXC: from the
+> **Proxmox host** (not inside the container) run `pct set <vmid> --features
+> nesting=1,keyctl=1`, make the container privileged, then inside it
+> `systemctl disable --now podman.socket 2>/dev/null && systemctl restart docker`.
+> A fresh LXC (rebuilt without a prior Podman install) can also sidestep this entirely.
 
 The admin UI and API are now on port 8080 (plain HTTP). Put TLS in front - any of:
 
