@@ -25,6 +25,8 @@ import org.json.JSONObject
 private const val HEARTBEAT_INTERVAL_MS = 45_000L
 private const val POLL_FALLBACK_MS = 60_000L
 private const val UPDATE_CHECK_MS = 6 * 3600_000L
+private const val CONNECT_RETRY_DELAY_MS = 10_000L
+private const val MAX_CONNECT_ATTEMPTS = 5 // give up and let the user fix the URL instead of retrying forever
 
 class MainActivity : AppCompatActivity() {
     private lateinit var prefs: Prefs
@@ -36,10 +38,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var root: FrameLayout
     private lateinit var statusView: TextView
     private lateinit var updateBadge: TextView
+    private lateinit var cancelButton: Button
 
     private var webSocket: WebSocket? = null
     private var syncJob: Job? = null
     private var scheduleJob: Job? = null
+    private var pairingJob: Job? = null
     private var currentItem: String? = null
     private var isPlaying = false
     private var activePlaylistId: String? = null
@@ -85,8 +89,19 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+        // Visible only while pairing (setup + connect-retry + waiting for a code claim);
+        // lets the user bail out and fix the server URL instead of being stuck.
+        cancelButton = Button(this).apply {
+            text = "Cancel"
+            visibility = View.GONE
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL,
+            ).apply { setMargins(0, 0, 0, 64) }
+        }
         root.addView(statusView)
         root.addView(updateBadge)
+        root.addView(cancelButton)
         setContentView(root)
 
         when {
@@ -112,9 +127,10 @@ class MainActivity : AppCompatActivity() {
             setTextColor(-1)
             gravity = Gravity.CENTER
         }
+        cancelButton.visibility = View.GONE
         val input = EditText(this).apply {
             hint = "https://…"
-            setText("https://")
+            setText(prefs.serverUrl ?: "https://") // keep whatever was last tried, so a typo is easy to fix
             // Plain EditText defaults to multi-line, so Enter just inserts "\n"
             // instead of submitting - force single-line with a "Go" IME action.
             setSingleLine(true)
@@ -159,10 +175,20 @@ class MainActivity : AppCompatActivity() {
     // ── Pairing: show the code, poll until an admin claims it ────────────────
 
     private fun startPairing() {
-        lifecycleScope.launch {
+        cancelButton.text = "Cancel"
+        cancelButton.visibility = View.VISIBLE
+        cancelButton.setOnClickListener {
+            pairingJob?.cancel()
+            cancelButton.visibility = View.GONE
+            showServerSetup() // prefs.serverUrl is left as-is so the URL can be edited, not retyped
+        }
+
+        pairingJob = lifecycleScope.launch {
+            var failedAttempts = 0
             while (prefs.deviceToken == null) {
                 try {
                     val registration = api.register()
+                    failedAttempts = 0
                     prefs.pairingRequestId = registration.requestId
                     statusView.text =
                         "Pair this screen\n\n${registration.code}\n\n${prefs.serverUrl}"
@@ -173,14 +199,24 @@ class MainActivity : AppCompatActivity() {
                         val poll = api.pollPairing(registration.requestId)
                         if (poll.status == "paired" && poll.deviceToken != null) {
                             prefs.deviceToken = poll.deviceToken
+                            cancelButton.visibility = View.GONE
                             startPlayer()
                             return@launch
                         }
                         if (poll.status == "expired") break
                     }
                 } catch (e: Exception) {
-                    statusView.text = "Cannot reach server\n${prefs.serverUrl}\nRetrying…"
-                    delay(10_000)
+                    failedAttempts++
+                    if (failedAttempts >= MAX_CONNECT_ATTEMPTS) {
+                        // Stop looping forever on a bad address - wait for the user instead.
+                        statusView.text = "Cannot reach server\n${prefs.serverUrl}\n\n" +
+                            "Gave up after $failedAttempts attempts. Check the address and try again."
+                        cancelButton.text = "Change server"
+                        return@launch
+                    }
+                    statusView.text = "Cannot reach server\n${prefs.serverUrl}\n" +
+                        "Retrying… ($failedAttempts/$MAX_CONNECT_ATTEMPTS)"
+                    delay(CONNECT_RETRY_DELAY_MS)
                 }
             }
         }
