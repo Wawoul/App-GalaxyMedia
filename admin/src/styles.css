@@ -50,7 +50,7 @@ th { color: var(--muted); font-weight: 600; }
   width: 220px; background: var(--panel); padding: 16px; display: flex;
   flex-direction: column; gap: 4px; border-right: 1px solid var(--border);
 }
-.sidebar .brand { font-size: 18px; font-weight: 700; margin-bottom: 16px; }
+.sidebar .brand { font-size: 23px; font-weight: 700; margin-bottom: 16px; }
 .sidebar .brand span { color: var(--accent); }
 .sidebar button {
   background: none; text-align: left; color: var(--muted); padding: 10px 12px;
