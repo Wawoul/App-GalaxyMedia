@@ -19,6 +19,7 @@ interface HostStats {
   memFreeBytes: number;
   diskTotalBytes: number;
   diskFreeBytes: number;
+  diskUsedBytes: number;
   osUptimeS: number;
   nodeVersion: string;
 }
@@ -102,7 +103,7 @@ export function System() {
   };
 
   const memUsed = hostStats ? hostStats.memTotalBytes - hostStats.memFreeBytes : 0;
-  const diskUsed = hostStats ? hostStats.diskTotalBytes - hostStats.diskFreeBytes : 0;
+  const diskUsed = hostStats?.diskUsedBytes ?? 0;
 
   return (
     <>
@@ -176,7 +177,8 @@ export function System() {
         )}
         <div className="muted" style={{ marginBottom: 12, fontSize: 13 }}>
           The download link is also how you get the APK onto brand-new TVs (USB stick or adb) -
-          after that first install, updates flow automatically.
+          after that first install, push updates per screen from the Screens tab when a tech
+          is on-site.
         </div>
         <div className="row">
           <input ref={fileInput} type="file" accept=".apk" style={{ display: 'none' }}

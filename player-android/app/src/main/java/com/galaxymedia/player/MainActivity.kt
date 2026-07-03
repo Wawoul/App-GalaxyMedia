@@ -18,6 +18,7 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
@@ -26,7 +27,8 @@ import org.json.JSONObject
 private const val HEARTBEAT_INTERVAL_MS = 45_000L
 private const val POLL_FALLBACK_MS = 60_000L
 private const val CONNECT_RETRY_DELAY_MS = 10_000L
-private const val MAX_CONNECT_ATTEMPTS = 5 // give up and let the user fix the URL instead of retrying forever
+private const val CONNECT_RETRY_SLOW_MS = 60_000L // background cadence after the fast attempts are exhausted
+private const val MAX_CONNECT_ATTEMPTS = 5 // fast retries before dropping to the slow background cadence
 
 class MainActivity : AppCompatActivity() {
     private lateinit var prefs: Prefs
@@ -175,10 +177,14 @@ class MainActivity : AppCompatActivity() {
     // ── Pairing: show the code, poll until an admin claims it ────────────────
 
     private fun startPairing() {
+        pairingJob?.cancel() // never let two pairing loops race (double-submit, unpair storms)
         cancelButton.text = "Cancel"
         cancelButton.visibility = View.VISIBLE
         cancelButton.setOnClickListener {
             pairingJob?.cancel()
+            // Forget the in-flight request: its code stays claimable server-side
+            // until it expires, but nothing will ever poll it again.
+            prefs.pairingRequestId = null
             cancelButton.visibility = View.GONE
             showServerSetup() // prefs.serverUrl is left as-is so the URL can be edited, not retyped
         }
@@ -208,15 +214,19 @@ class MainActivity : AppCompatActivity() {
                 } catch (e: Exception) {
                     failedAttempts++
                     if (failedAttempts >= MAX_CONNECT_ATTEMPTS) {
-                        // Stop looping forever on a bad address - wait for the user instead.
+                        // Likely a bad address - stop the fast loop and tell the user.
+                        // But KEEP retrying slowly in the background: an unpaired TV
+                        // rebooting after a power cut (router still coming up) must
+                        // self-recover with no one holding a remote (SPEC §6).
                         statusView.text = "Cannot reach server\n${prefs.serverUrl}\n\n" +
-                            "Gave up after $failedAttempts attempts. Check the address and try again."
+                            "Still trying in the background - check the address if this persists."
                         cancelButton.text = "Change server"
-                        return@launch
+                        delay(CONNECT_RETRY_SLOW_MS)
+                    } else {
+                        statusView.text = "Cannot reach server\n${prefs.serverUrl}\n" +
+                            "Retrying… ($failedAttempts/$MAX_CONNECT_ATTEMPTS)"
+                        delay(CONNECT_RETRY_DELAY_MS)
                     }
-                    statusView.text = "Cannot reach server\n${prefs.serverUrl}\n" +
-                        "Retrying… ($failedAttempts/$MAX_CONNECT_ATTEMPTS)"
-                    delay(CONNECT_RETRY_DELAY_MS)
                 }
             }
         }
@@ -433,29 +443,35 @@ class MainActivity : AppCompatActivity() {
         // request crash the whole app.
         runCatching {
             android.view.PixelCopy.request(window, bitmap, { result ->
-                if (result == android.view.PixelCopy.SUCCESS) {
-                    // Off the main thread: compressing a full-resolution (up to 4K)
-                    // capture is slow enough to ANR a cheap TV box otherwise.
-                    lifecycleScope.launch(Dispatchers.IO) {
-                        runCatching {
-                            val maxDim = 1280
-                            val scale = (maxDim.toFloat() / maxOf(bitmap.width, bitmap.height)).coerceAtMost(1f)
-                            val toUpload = if (scale < 1f) {
-                                android.graphics.Bitmap.createScaledBitmap(
-                                    bitmap, (bitmap.width * scale).toInt(), (bitmap.height * scale).toInt(), true,
-                                )
-                            } else {
-                                bitmap
-                            }
-                            val out = java.io.ByteArrayOutputStream()
-                            toUpload.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, out)
-                            if (toUpload !== bitmap) toUpload.recycle()
-                            api.uploadScreenshot(out.toByteArray())
-                        }
-                        bitmap.recycle()
-                    }
-                } else {
+                // The activity may have been destroyed (e.g. a "restart" command)
+                // between the request and this callback - launch would silently
+                // never run on a cancelled scope, leaking the bitmap.
+                if (result != android.view.PixelCopy.SUCCESS || !lifecycleScope.isActive) {
                     bitmap.recycle()
+                    return@request
+                }
+                // Off the main thread: compressing a full-resolution (up to 4K)
+                // capture is slow enough to ANR a cheap TV box otherwise.
+                lifecycleScope.launch(Dispatchers.IO) {
+                    val jpeg = runCatching {
+                        val maxDim = 1280
+                        val scale = (maxDim.toFloat() / maxOf(bitmap.width, bitmap.height)).coerceAtMost(1f)
+                        val toUpload = if (scale < 1f) {
+                            android.graphics.Bitmap.createScaledBitmap(
+                                bitmap, (bitmap.width * scale).toInt(), (bitmap.height * scale).toInt(), true,
+                            )
+                        } else {
+                            bitmap
+                        }
+                        val out = java.io.ByteArrayOutputStream()
+                        toUpload.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, out)
+                        if (toUpload !== bitmap) toUpload.recycle()
+                        out.toByteArray()
+                    }.getOrNull()
+                    // Free the ~33MB-at-4K capture BEFORE the (possibly slow) upload,
+                    // so stacked screenshot commands can't OOM a small TV box.
+                    bitmap.recycle()
+                    if (jpeg != null) runCatching { api.uploadScreenshot(jpeg) }
                 }
             }, android.os.Handler(mainLooper))
         }.onFailure {

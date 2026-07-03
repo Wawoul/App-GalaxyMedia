@@ -30,6 +30,17 @@ class UpdateManager(private val context: Context, private val api: ApiClient, pr
     /** Returns true when an update was downloaded and the installer was launched. */
     suspend fun checkAndInstall(): Boolean = withContext(Dispatchers.IO) {
         val info = fetchInfo() ?: return@withContext false
+        // Downloaded-but-never-installed APKs from superseded releases would
+        // otherwise pile up in cacheDir forever (installs need on-site approval,
+        // so "never installed" is common) - keep only the current target's file,
+        // which the download step below can reuse if its hash still matches.
+        context.cacheDir.listFiles()?.forEach { f ->
+            if (f.name.startsWith("update-") && f.name.endsWith(".apk") &&
+                f.name != "update-${info.versionCode}.apk"
+            ) {
+                f.delete()
+            }
+        }
         if (info.versionCode <= BuildConfig.VERSION_CODE) return@withContext false
 
         val apk = File(context.cacheDir, "update-${info.versionCode}.apk")

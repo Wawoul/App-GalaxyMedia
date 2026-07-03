@@ -139,37 +139,43 @@ export function mediaRoutes(app: FastifyInstance): void {
       if (recursive === 'true') {
         // Permanently delete the folder, every subfolder beneath it, and every
         // media file inside any of them (not just moved up - actually gone).
-        const { rows: subtree } = await query<{ id: string }>(
-          `WITH RECURSIVE subtree AS (
-             SELECT id FROM media_folders WHERE id = $1
-             UNION ALL
-             SELECT f.id FROM media_folders f JOIN subtree s ON f.parent_id = s.id
-           )
-           SELECT id FROM subtree`,
-          [id],
-        );
-        const folderIds = subtree.map((f) => f.id);
-        const { rows: mediaRows } = await query<{ id: string; mime: string }>(
-          'SELECT id, mime FROM media WHERE folder_id = ANY($1::uuid[])',
-          [folderIds],
-        );
-        for (const m of mediaRows) {
+        // Rows first, files after commit: the DELETE's RETURNING is the
+        // authoritative file list (no TOCTOU with concurrent moves/uploads),
+        // and a failed transaction never leaves rows pointing at unlinked files.
+        const deleted = await withTransaction(async (tx) => {
+          // UNION (not ALL) + company scoping: terminates even on a corrupt
+          // parent_id cycle and can never cross a tenant boundary.
+          const { rows: subtree } = await tx.query<{ id: string }>(
+            `WITH RECURSIVE subtree AS (
+               SELECT id FROM media_folders WHERE id = $1 AND company_id = $2
+               UNION
+               SELECT f.id FROM media_folders f JOIN subtree s ON f.parent_id = s.id
+               WHERE f.company_id = $2
+             )
+             SELECT id FROM subtree`,
+            [id, companyId],
+          );
+          const folderIds = subtree.map((f) => f.id);
+          const { rows: mediaRows } = await tx.query<{ id: string; mime: string }>(
+            'DELETE FROM media WHERE folder_id = ANY($1::uuid[]) RETURNING id, mime',
+            [folderIds],
+          );
+          await tx.query('DELETE FROM media_folders WHERE id = ANY($1::uuid[])', [folderIds]);
+          return { folderIds, mediaRows };
+        });
+        for (const m of deleted.mediaRows) {
           await unlink(mediaPath(companyId, m.id, extFromMime(m.mime))).catch(() => {});
         }
-        await withTransaction(async (tx) => {
-          await tx.query('DELETE FROM media WHERE folder_id = ANY($1::uuid[])', [folderIds]);
-          await tx.query('DELETE FROM media_folders WHERE id = ANY($1::uuid[])', [folderIds]);
-        });
         audit({
           userId: req.principal!.id,
           companyId,
           action: 'folder.delete_recursive',
           entityId: id,
           ip: req.ip,
-          detail: { foldersDeleted: folderIds.length, mediaDeleted: mediaRows.length },
+          detail: { foldersDeleted: deleted.folderIds.length, mediaDeleted: deleted.mediaRows.length },
         });
         notifyCompany(companyId, { type: 'sync' }); // playlists referencing deleted media need to refresh
-        return reply.send({ ok: true, foldersDeleted: folderIds.length, mediaDeleted: mediaRows.length });
+        return reply.send({ ok: true, foldersDeleted: deleted.folderIds.length, mediaDeleted: deleted.mediaRows.length });
       }
 
       const parent = rows[0].parent_id;

@@ -8,6 +8,7 @@ import { signDownload, verifyDownload } from '../lib/crypto.js';
 import { canAccessCompany, visibleCompanies } from '../lib/permissions.js';
 import { requireUser } from '../plugins/auth.js';
 import { signDeviceToken } from '../lib/tokens.js';
+import { getApkRelease } from './system.js';
 import { notifyScreen } from '../ws.js';
 
 export function screenRoutes(app: FastifyInstance): void {
@@ -307,6 +308,11 @@ export function screenRoutes(app: FastifyInstance): void {
     if (!rows[0]) return reply.code(404).send({ error: 'not_found' });
     if (!canAccessCompany(req.principal!, rows[0].company_id, 'editor')) {
       return reply.code(403).send({ error: 'forbidden' });
+    }
+    // Sending "update" with nothing published would report delivered:true while
+    // the TV silently finds no release - reject up front instead.
+    if (body.command === 'update' && !(await getApkRelease())) {
+      return reply.code(400).send({ error: 'no_release_published' });
     }
     const delivered = notifyScreen(id, { type: 'command', command: body.command });
     audit({

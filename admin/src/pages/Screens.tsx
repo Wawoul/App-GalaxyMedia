@@ -104,6 +104,12 @@ export function Screens({
         case 'clear_cache':
         case 'update':
         case 'screenshot': {
+          // Offline check first: don't make the user read and accept a scary
+          // confirm dialog only to then be told the screen can't receive it.
+          if (!screen.online) {
+            setError(`"${screen.name}" is offline - it can't receive commands right now.`);
+            break;
+          }
           if (action === 'restart' && !confirm(`Restart the player app on "${screen.name}"? Playback briefly interrupts.`)) {
             break;
           }
@@ -121,10 +127,6 @@ export function Screens({
               `on-site right now to approve it.`,
             )
           ) {
-            break;
-          }
-          if (!screen.online) {
-            setError(`"${screen.name}" is offline - it can't receive commands right now.`);
             break;
           }
           const cmd = await api<{ ok: boolean; delivered: boolean }>(

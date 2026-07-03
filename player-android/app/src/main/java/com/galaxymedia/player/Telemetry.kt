@@ -4,6 +4,7 @@ import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.net.wifi.WifiManager
 import android.os.BatteryManager
 import android.os.Process
@@ -54,6 +55,9 @@ class Telemetry(private val context: Context) {
     }.getOrNull()
 
     private fun hasBattery(): Boolean {
+        // TV form factor never has a battery - this also catches fake battery
+        // HALs that (wrongly) report EXTRA_PRESENT=true on reflashed TV boxes.
+        if (context.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)) return false
         val sticky = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         return sticky?.getBooleanExtra(BatteryManager.EXTRA_PRESENT, false) ?: false
     }

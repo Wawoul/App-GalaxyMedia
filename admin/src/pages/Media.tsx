@@ -194,7 +194,7 @@ export function Media({ company, canEdit }: { company: Company; canEdit: boolean
                             ? `Permanently delete folder "${f.name}" and everything inside it - ` +
                               `${mediaCount} file${mediaCount === 1 ? '' : 's'}` +
                               (folderCount > 0 ? ` across ${folderCount} subfolder${folderCount === 1 ? '' : 's'}` : '') +
-                              `? This cannot be undone.`
+                              `? Deleted files are also removed from any playlists using them. This cannot be undone.`
                             : `Delete empty folder "${f.name}" and its ${folderCount} empty subfolder${folderCount === 1 ? '' : 's'}?`;
                           if (confirm(warning)) {
                             void run(() => api(`/api/folders/${f.id}?recursive=true`, { method: 'DELETE' }));

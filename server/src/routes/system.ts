@@ -77,10 +77,14 @@ export function systemRoutes(app: FastifyInstance): void {
     scope.get('/api/system/host-stats', async (_req, reply) => {
       let diskTotalBytes = 0;
       let diskFreeBytes = 0;
+      let diskUsedBytes = 0;
       try {
         const disk = await statfs(config.MEDIA_DIR);
         diskTotalBytes = disk.blocks * disk.bsize;
-        diskFreeBytes = disk.bavail * disk.bsize;
+        diskFreeBytes = disk.bavail * disk.bsize; // what non-root can still write
+        // df-style used (blocks - bfree): total - bavail would wrongly count
+        // the ~5% root-reserved blocks as "used" on an empty ext4 volume.
+        diskUsedBytes = (disk.blocks - disk.bfree) * disk.bsize;
       } catch {
         // statfs unsupported on this platform/filesystem - UI shows "-"
       }
@@ -92,6 +96,7 @@ export function systemRoutes(app: FastifyInstance): void {
         memFreeBytes: os.freemem(),
         diskTotalBytes,
         diskFreeBytes,
+        diskUsedBytes,
         osUptimeS: os.uptime(),
         nodeVersion: process.version,
       });
