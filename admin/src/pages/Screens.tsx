@@ -100,7 +100,18 @@ export function Screens({
       switch (action) {
         case 'identify':
         case 'reload':
+        case 'restart':
+        case 'clear_cache':
         case 'screenshot': {
+          if (action === 'restart' && !confirm(`Restart the player app on "${screen.name}"? Playback briefly interrupts.`)) {
+            break;
+          }
+          if (
+            action === 'clear_cache' &&
+            !confirm(`Clear "${screen.name}"'s local media cache? Everything re-downloads, which can take a while and uses bandwidth.`)
+          ) {
+            break;
+          }
           if (!screen.online) {
             setError(`"${screen.name}" is offline - it can't receive commands right now.`);
             break;
@@ -318,6 +329,8 @@ export function Screens({
                         <option value="health">Device health…</option>
                         <option value="identify">Identify (flash name on TV)</option>
                         <option value="reload">Reload content</option>
+                        <option value="restart">Restart app</option>
+                        <option value="clear_cache">Clear media cache</option>
                         <option value="screenshot">Take screenshot</option>
                         {s.screenshot_url && <option value="view_shot">{shotId === s.id ? 'Hide screenshot' : 'View screenshot'}</option>}
                         <option value="rename">Rename</option>
