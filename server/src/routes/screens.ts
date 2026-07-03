@@ -71,7 +71,9 @@ export function screenRoutes(app: FastifyInstance): void {
     const { rows } = await query(
       `SELECT s.id, s.company_id, s.name, s.timezone, s.paired_at, s.last_seen_at, s.app_version,
               s.ip, coalesce(med.original_name, s.current_item) AS current_item,
-              s.storage_free_mb, s.screenshot_at, s.created_at,
+              s.storage_free_mb, s.battery_pct, s.ram_free_mb, s.ram_total_mb,
+              s.cpu_pct, s.wifi_rssi, s.uptime_s::int AS uptime_s, s.orientation,
+              s.screenshot_at, s.created_at,
               c.name AS company_name,
               (s.device_token_jti IS NOT NULL) AS paired,
               (s.last_seen_at > now() - interval '3 minutes') AS online,
@@ -182,6 +184,7 @@ export function screenRoutes(app: FastifyInstance): void {
       .object({
         name: z.string().trim().min(1).max(200).optional(),
         timezone: z.string().max(64).nullable().optional(),
+        orientation: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).optional(),
         groupIds: z.array(z.string().uuid()).optional(),
       })
       .parse(req.body);
@@ -196,6 +199,9 @@ export function screenRoutes(app: FastifyInstance): void {
       if (body.name !== undefined) await tx.query('UPDATE screens SET name = $2 WHERE id = $1', [id, body.name]);
       if (body.timezone !== undefined) {
         await tx.query('UPDATE screens SET timezone = $2 WHERE id = $1', [id, body.timezone]);
+      }
+      if (body.orientation !== undefined) {
+        await tx.query('UPDATE screens SET orientation = $2 WHERE id = $1', [id, body.orientation]);
       }
       if (body.groupIds !== undefined) {
         const owned = await tx.query<{ id: string }>(

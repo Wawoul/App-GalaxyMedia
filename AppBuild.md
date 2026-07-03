@@ -108,6 +108,12 @@ cd $env:LOCALAPPDATA\Android\Sdk\platform-tools
 **Then run the two acceptance tests:** pull the TV's network mid-playback (must keep looping),
 and reboot it offline (must come back playing with no remote-control input).
 
+7. **For OTA self-updates to work**, allow "Install unknown apps" for the *Galaxy Media
+   Player* app itself: **Settings → Apps → Special app access → Install unknown apps →
+   Galaxy Media Player → Allow**. (Step 5's prompt only covered the file manager/adb.
+   If you skip this, Android shows the permission screen on the TV at the first OTA
+   update instead - one click with the remote, but better done now while you're here.)
+
 ## 7. Releasing updates (after the first install)
 
 You only sideload manually once per TV. For every release after that:

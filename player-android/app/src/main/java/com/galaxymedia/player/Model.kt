@@ -26,6 +26,7 @@ data class ManifestScreen(
     val id: String,
     val name: String,
     val timezone: String,
+    val orientation: Int = 0, // 0 | 90 | 180 | 270 - software display rotation
     val brandName: String = "", // white-label name for the idle screen
 )
 
@@ -38,6 +39,13 @@ data class HeartbeatPayload(
     val currentItem: String?,
     val storageFreeMb: Int,
     val plays: List<PlayRecord> = emptyList(),
+    // Device telemetry (SPEC §7) - null when unavailable on this hardware.
+    val batteryPct: Int? = null,
+    val ramFreeMb: Int? = null,
+    val ramTotalMb: Int? = null,
+    val cpuPct: Int? = null,
+    val wifiRssi: Int? = null,
+    val uptimeS: Long? = null,
 )
 
 @Serializable

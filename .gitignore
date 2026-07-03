@@ -24,6 +24,7 @@ player-android/local.properties
 player-android/app/build/
 player-android/build/
 *.apk
+*.idsig
 *.keystore
 *.jks
 

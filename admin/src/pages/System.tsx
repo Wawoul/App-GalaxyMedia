@@ -18,6 +18,7 @@ export function System() {
   const [progress, setProgress] = useState<number | null>(null);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
+  const [fileName, setFileName] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -53,6 +54,7 @@ export function System() {
       setRelease(await api<ApkRelease | null>('/api/system/apk'));
       setVersionCode('');
       setVersionName('');
+      setFileName('');
       if (fileInput.current) fileInput.current.value = '';
     } catch (err) {
       setError(err instanceof Error ? err.message : 'upload failed');
@@ -72,6 +74,9 @@ export function System() {
           Version code must be higher than what the TVs run (it is in
           player-android/app/build.gradle.kts, bump it each release). The TV verifies the
           file hash and the Android system verifies the signature before installing.
+          For updates to install, each TV needs <strong>"Install unknown apps"</strong> allowed
+          for the Galaxy Player app (Settings → Apps → Special app access → Install unknown
+          apps) - Android prompts for this during the first update if it isn't set.
         </div>
         {release ? (
           <div className="row" style={{ marginBottom: 12 }}>
@@ -97,12 +102,17 @@ export function System() {
           after that first install, updates flow automatically.
         </div>
         <div className="row">
-          <input ref={fileInput} type="file" accept=".apk" />
+          <input ref={fileInput} type="file" accept=".apk" style={{ display: 'none' }}
+            onChange={(e) => setFileName(e.target.files?.[0]?.name ?? '')} />
+          <button className="secondary" onClick={() => fileInput.current?.click()}>
+            Choose APK…
+          </button>
+          {fileName && <span className="muted">{fileName}</span>}
           <input placeholder="Version code (e.g. 2)" value={versionCode} style={{ width: 150 }}
             onChange={(e) => setVersionCode(e.target.value.replace(/\D/g, ''))} />
           <input placeholder="Version name (e.g. 0.2.0)" value={versionName} style={{ width: 150 }}
             onChange={(e) => setVersionName(e.target.value)} />
-          <button onClick={upload} disabled={!versionCode || !versionName || progress !== null}>
+          <button onClick={upload} disabled={!fileName || !versionCode || !versionName || progress !== null}>
             Publish release
           </button>
           {progress !== null && (

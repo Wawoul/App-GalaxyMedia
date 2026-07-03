@@ -82,9 +82,10 @@ export function deviceRoutes(app: FastifyInstance): void {
         name: string;
         company_id: string;
         timezone: string | null;
+        orientation: number;
         brand_name: string;
       }>(
-        `SELECT s.id, s.name, s.company_id, s.timezone, c.brand_name
+        `SELECT s.id, s.name, s.company_id, s.timezone, s.orientation, c.brand_name
          FROM screens s JOIN companies c ON c.id = s.company_id WHERE s.id = $1`,
         [screenId],
       );
@@ -263,7 +264,13 @@ export function deviceRoutes(app: FastifyInstance): void {
         null;
 
       return reply.send({
-        screen: { id: screen.id, name: screen.name, timezone, brandName: screen.brand_name },
+        screen: {
+          id: screen.id,
+          name: screen.name,
+          timezone,
+          orientation: screen.orientation,
+          brandName: screen.brand_name,
+        },
         schedules,
         playlist: legacyPlaylistId ? playlists.get(legacyPlaylistId) : null,
         generatedAt: new Date().toISOString(),
@@ -295,6 +302,13 @@ export function deviceRoutes(app: FastifyInstance): void {
           appVersion: z.string().max(50).optional(),
           currentItem: z.string().max(200).nullish(),
           storageFreeMb: z.number().int().nonnegative().optional(),
+          // Device telemetry - all optional so old player builds keep working.
+          batteryPct: z.number().int().min(0).max(100).nullish(),
+          ramFreeMb: z.number().int().nonnegative().nullish(),
+          ramTotalMb: z.number().int().nonnegative().nullish(),
+          cpuPct: z.number().int().min(0).max(100).nullish(),
+          wifiRssi: z.number().int().min(-127).max(0).nullish(),
+          uptimeS: z.number().int().nonnegative().nullish(),
           // Proof-of-play batch: items shown since the last successful heartbeat.
           plays: z
             .array(z.object({ name: z.string().min(1).max(300), at: z.string().datetime() }))
@@ -304,9 +318,24 @@ export function deviceRoutes(app: FastifyInstance): void {
         .parse(req.body ?? {});
       await query(
         `UPDATE screens SET last_seen_at = now(), app_version = coalesce($2, app_version),
-           ip = $3, current_item = $4, storage_free_mb = coalesce($5, storage_free_mb)
+           ip = $3, current_item = $4, storage_free_mb = coalesce($5, storage_free_mb),
+           battery_pct = coalesce($6, battery_pct), ram_free_mb = coalesce($7, ram_free_mb),
+           ram_total_mb = coalesce($8, ram_total_mb), cpu_pct = coalesce($9, cpu_pct),
+           wifi_rssi = coalesce($10, wifi_rssi), uptime_s = coalesce($11, uptime_s)
          WHERE id = $1`,
-        [req.screenId, body.appVersion ?? null, req.ip, body.currentItem ?? null, body.storageFreeMb ?? null],
+        [
+          req.screenId,
+          body.appVersion ?? null,
+          req.ip,
+          body.currentItem ?? null,
+          body.storageFreeMb ?? null,
+          body.batteryPct ?? null,
+          body.ramFreeMb ?? null,
+          body.ramTotalMb ?? null,
+          body.cpuPct ?? null,
+          body.wifiRssi ?? null,
+          body.uptimeS ?? null,
+        ],
       );
       if (body.plays.length > 0) {
         await query(

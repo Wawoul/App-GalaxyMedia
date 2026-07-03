@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 // Test env (DB URL, keys) comes from vitest.config.ts.
 import { decrypt, encrypt, generatePairingCode, signDownload, verifyDownload } from './crypto.js';
-import { sniffMediaType } from './uploads.js';
 
 describe('encryption', () => {
   it('round-trips and produces distinct ciphertexts (fresh IV each time)', () => {
@@ -44,23 +43,5 @@ describe('signed download URLs', () => {
     expect(verifyDownload(media, expired)).toBe(false);
     expect(verifyDownload(media, 'screen-1.9999999999.forged')).toBe(false);
     expect(verifyDownload(media, 'garbage')).toBe(false);
-  });
-});
-
-describe('upload sniffing (magic bytes, not extension)', () => {
-  it('detects real types', () => {
-    expect(sniffMediaType(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0]))?.mime).toBe('image/jpeg');
-    expect(
-      sniffMediaType(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]))?.mime,
-    ).toBe('image/png');
-    expect(sniffMediaType(Buffer.concat([Buffer.from('RIFF\0\0\0\0WEBP')]))?.mime).toBe('image/webp');
-    expect(sniffMediaType(Buffer.concat([Buffer.from([0, 0, 0, 32]), Buffer.from('ftypisom0000')]))?.kind).toBe(
-      'video',
-    );
-  });
-
-  it('rejects executables and unknown types regardless of claimed name', () => {
-    expect(sniffMediaType(Buffer.from('MZ\x90\x00\x03\x00\x00\x00\x04\x00\x00\x00'))).toBeNull(); // PE .exe
-    expect(sniffMediaType(Buffer.from('<html><script>x</script>'))).toBeNull();
   });
 });

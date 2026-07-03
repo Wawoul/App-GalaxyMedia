@@ -9,6 +9,7 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.updateLayoutParams
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -27,6 +28,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var cache: MediaCache
     private lateinit var updater: UpdateManager
     private lateinit var engine: PlaybackEngine
+    private lateinit var telemetry: Telemetry
     private lateinit var root: FrameLayout
     private lateinit var statusView: TextView
     private lateinit var updateBadge: TextView
@@ -47,6 +49,7 @@ class MainActivity : AppCompatActivity() {
         api = ApiClient(prefs)
         cache = MediaCache(this, api.http)
         updater = UpdateManager(this, api, prefs)
+        telemetry = Telemetry(this)
 
         root = FrameLayout(this)
         statusView = TextView(this).apply {
@@ -163,10 +166,10 @@ class MainActivity : AppCompatActivity() {
         val screen = api.cachedManifest()?.screen
         val brand = screen?.brandName?.takeIf { it.isNotBlank() } ?: "Galaxy Media"
         statusView.text = buildString {
-            append("DON'T PANIC\n\n")
+            append(":)\n\n")
             append("This screen is connected to ").append(brand)
-            if (screen?.name != null) append(" as “").append(screen.name).append("”")
-            append(".\n\nAssign it a playlist in the admin and content will appear here.")
+            if (screen?.name != null) append("\n“").append(screen.name).append("”")
+            append("\n\nAssigned content will display here")
         }
         statusView.visibility = View.VISIBLE
     }
@@ -181,8 +184,38 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private var appliedOrientation = -1
+
+    /**
+     * Software rotation for portrait / flipped installs (SPEC §4). TV panels are
+     * landscape-fixed, so the content view is rotated and resized instead of
+     * relying on requestedOrientation (which TVs ignore).
+     */
+    private fun applyOrientation(deg: Int) {
+        if (deg == appliedOrientation) return
+        appliedOrientation = deg
+        val metrics = resources.displayMetrics
+        val w = metrics.widthPixels
+        val h = metrics.heightPixels
+        root.rotation = deg.toFloat()
+        if (deg % 180 != 0) {
+            // Swap dimensions and re-center: a h×w view rotated ±90° fills the panel.
+            root.updateLayoutParams { width = h; height = w }
+            root.translationX = (w - h) / 2f
+            root.translationY = (h - w) / 2f
+        } else {
+            root.updateLayoutParams {
+                width = FrameLayout.LayoutParams.MATCH_PARENT
+                height = FrameLayout.LayoutParams.MATCH_PARENT
+            }
+            root.translationX = 0f
+            root.translationY = 0f
+        }
+    }
+
     /** (Re)start playback with whatever the schedule says should be on now. */
     private fun applySchedule(manifest: Manifest?) {
+        if (manifest != null) applyOrientation(manifest.screen.orientation)
         val entry = manifest?.takeIf { it.schedules.isNotEmpty() }
             ?.let { Schedule.resolveActive(it.schedules, it.screen.timezone) }
         val blackout = entry?.blackout == true
@@ -243,7 +276,7 @@ class MainActivity : AppCompatActivity() {
                         runCatching { updater.checkAndInstall() }
                     }
                     val plays = synchronized(playsBuffer) { playsBuffer.toList() }
-                    api.heartbeat(BuildConfig.VERSION_NAME, currentItem, cache.freeSpaceMb(), plays)
+                    api.heartbeat(BuildConfig.VERSION_NAME, currentItem, cache.freeSpaceMb(), plays, telemetry.sample())
                     // Delivered: drop what we sent (new plays may have arrived meanwhile).
                     synchronized(playsBuffer) { repeat(plays.size) { if (playsBuffer.isNotEmpty()) playsBuffer.removeFirst() } }
                 } catch (e: RevokedException) {
@@ -323,8 +356,11 @@ class MainActivity : AppCompatActivity() {
     /** Grab what's on screen (PixelCopy captures video surfaces too) and upload it. */
     private fun captureAndUpload() {
         if (android.os.Build.VERSION.SDK_INT < 26) return // PixelCopy needs API 26
+        // Window dimensions, not root's: applyOrientation() swaps root to h×w on
+        // rotated screens, which would squash the copied window surface.
+        val decor = window.decorView
         val bitmap = android.graphics.Bitmap.createBitmap(
-            root.width.coerceAtLeast(1), root.height.coerceAtLeast(1),
+            decor.width.coerceAtLeast(1), decor.height.coerceAtLeast(1),
             android.graphics.Bitmap.Config.ARGB_8888,
         )
         android.view.PixelCopy.request(window, bitmap, { result ->

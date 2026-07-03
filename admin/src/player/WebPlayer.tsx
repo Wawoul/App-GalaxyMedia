@@ -39,14 +39,41 @@ interface Entry extends ScheduleEntry {
   layout?: Layout | null;
 }
 interface Manifest {
-  screen: { id: string; name: string; timezone: string; brandName?: string };
+  screen: { id: string; name: string; timezone: string; orientation?: number; brandName?: string };
   schedules: Entry[];
   playlist?: Playlist | null;
 }
 
+/**
+ * Software rotation for sideways/upside-down mounted displays: the content is
+ * rendered into a wrapper sized to the rotated viewport, so zone percentages
+ * keep working. vw units would still track the physical viewport, so the
+ * wrapper's font-size is set to 1% of the LOGICAL width and text inside uses
+ * em multiples of it.
+ */
+function orientationStyle(deg: number): React.CSSProperties {
+  const fontSize = deg === 90 || deg === 270 ? '1vh' : '1vw';
+  switch (deg) {
+    case 90:
+      return {
+        position: 'absolute', top: 0, left: 0, width: '100vh', height: '100vw', fontSize,
+        transformOrigin: 'top left', transform: 'rotate(90deg) translateY(-100%)',
+      };
+    case 180:
+      return { position: 'absolute', inset: 0, fontSize, transform: 'rotate(180deg)' };
+    case 270:
+      return {
+        position: 'absolute', top: 0, left: 0, width: '100vh', height: '100vw', fontSize,
+        transformOrigin: 'top left', transform: 'rotate(-90deg) translateX(-100%)',
+      };
+    default:
+      return { position: 'absolute', inset: 0, fontSize };
+  }
+}
+
 const TOKEN_KEY = 'gm_device_token';
 const MANIFEST_KEY = 'gm_manifest';
-const VERSION = 'web-1.0.0';
+const VERSION = 'web-1.1.0';
 
 const isStream = (url: string) => {
   const path = url.split('?')[0]!.toLowerCase();
@@ -322,6 +349,7 @@ export function WebPlayer() {
 
   return (
     <div className="gm-player">
+      <div style={orientationStyle(manifest?.screen.orientation ?? 0)}>
       {blackout ? null : layout ? (
         layout.zones.map((zone) => (
           <div key={zone.key} style={{
@@ -340,20 +368,25 @@ export function WebPlayer() {
         <PlaylistView playlist={playlist} onItem={onItem} />
       ) : (
         <div className="gm-center" style={{ position: 'absolute', inset: 0 }}>
-          <div style={{ textAlign: 'center', maxWidth: '70%', fontSize: '2.2vw', lineHeight: 1.6 }}>
-            <div style={{ fontSize: '4vw', fontWeight: 700, marginBottom: '2vw' }}>DON'T PANIC</div>
+          <div style={{ textAlign: 'center', maxWidth: '70%', fontSize: '2.2em', lineHeight: 1.6 }}>
+            {/* 2.7em of the 2.2em parent ≈ 6% of the logical width */}
+            <div style={{ fontSize: '2.7em', fontWeight: 700, marginBottom: '0.4em' }}>:)</div>
             This screen is connected to {brand}
-            {manifest?.screen.name ? ` as “${manifest.screen.name}”` : ''}.
-            <br />
-            Assign it a playlist in the admin and content will appear here.
+            {manifest?.screen.name && (
+              <div style={{ fontWeight: 700, fontSize: '1.3em' }}>“{manifest.screen.name}”</div>
+            )}
+            <div style={{ opacity: 0.6, marginTop: '1em' }}>
+              Assigned content will display here
+            </div>
           </div>
         </div>
       )}
       {overlay && (
-        <div className="gm-center" style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.75)', fontSize: '6vw', fontWeight: 700 }}>
+        <div className="gm-center" style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.75)', fontSize: '6em', fontWeight: 700 }}>
           {overlay}
         </div>
       )}
+      </div>
     </div>
   );
 }

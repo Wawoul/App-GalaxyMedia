@@ -33,8 +33,16 @@ export interface Screen {
   online: boolean;
   last_seen_at: string | null;
   app_version: string | null;
+  ip: string | null;
   current_item: string | null;
   storage_free_mb: number | null;
+  battery_pct: number | null;
+  ram_free_mb: number | null;
+  ram_total_mb: number | null;
+  cpu_pct: number | null;
+  wifi_rssi: number | null;
+  uptime_s: number | null;
+  orientation: 0 | 90 | 180 | 270;
   group_ids: string[];
   playlist_name: string | null;
   screenshot_at: string | null;

@@ -11,17 +11,13 @@ import { query } from '../db/pool.js';
 import { audit } from '../lib/audit.js';
 import { signDownload, verifyDownload } from '../lib/crypto.js';
 import { canAccessCompany } from '../lib/permissions.js';
-import { sniffMediaType } from '../lib/uploads.js';
+import { extFromMime, sniffMediaType } from '../lib/uploads.js';
 import { requireUser } from '../plugins/auth.js';
 import { notifyCompany } from '../ws.js';
 
 /** Media lives at MEDIA_DIR/<companyId>/<mediaId>.<ext> - server-generated names only. */
 export function mediaPath(companyId: string, mediaId: string, ext: string): string {
   return path.join(config.MEDIA_DIR, companyId, `${mediaId}.${ext}`);
-}
-
-export function extFromMime(mime: string): string {
-  return { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'video/mp4': 'mp4' }[mime] ?? 'bin';
 }
 
 export function mediaRoutes(app: FastifyInstance): void {
@@ -247,7 +243,7 @@ export function mediaRoutes(app: FastifyInstance): void {
         transform(chunk: Buffer, _enc, cb) {
           hasher.update(chunk);
           size += chunk.length;
-          if (head.length < 16) head = Buffer.concat([head, chunk]).subarray(0, 16);
+          if (head.length < 64) head = Buffer.concat([head, chunk]).subarray(0, 64);
           cb(null, chunk);
         },
       });

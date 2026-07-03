@@ -24,6 +24,23 @@ input, select {
   background: var(--panel2); color: var(--text); border: 1px solid var(--border);
   border-radius: 6px; padding: 8px 10px; font-size: 14px;
 }
+/* Checkboxes render as theme-colored toggle switches everywhere */
+input[type="checkbox"] {
+  appearance: none; -webkit-appearance: none;
+  width: 36px; height: 20px; padding: 0; margin: 0;
+  border-radius: 999px; background: var(--panel2);
+  border: 1px solid var(--border); position: relative;
+  cursor: pointer; vertical-align: middle; flex-shrink: 0;
+  transition: background 0.15s, border-color 0.15s;
+}
+input[type="checkbox"]::after {
+  content: ''; position: absolute; top: 2px; left: 2px;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--muted); transition: left 0.15s, background 0.15s;
+}
+input[type="checkbox"]:checked { background: var(--accent); border-color: var(--accent); }
+input[type="checkbox"]:checked::after { left: 18px; background: #fff; }
+input[type="checkbox"]:disabled { opacity: 0.5; cursor: default; }
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 14px; }
 th { color: var(--muted); font-weight: 600; }
@@ -115,7 +132,7 @@ th { color: var(--muted); font-weight: 600; }
 .chip:hover { color: var(--text); }
 .chip-on { background: var(--accent); border-color: var(--accent); color: #fff; }
 .chip-on:hover { color: #fff; }
-.main { flex: 1; padding: 24px; max-width: 1100px; }
+.main { flex: 1; padding: 24px; min-width: 0; }
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .spread { justify-content: space-between; }

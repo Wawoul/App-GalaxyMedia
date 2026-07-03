@@ -66,10 +66,19 @@ class ApiClient(private val prefs: Prefs) {
         currentItem: String?,
         storageFreeMb: Int,
         plays: List<PlayRecord> = emptyList(),
+        telemetry: TelemetrySample? = null,
     ) = withContext(Dispatchers.IO) {
         val payload = json.encodeToString(
             HeartbeatPayload.serializer(),
-            HeartbeatPayload(appVersion, currentItem, storageFreeMb, plays),
+            HeartbeatPayload(
+                appVersion, currentItem, storageFreeMb, plays,
+                batteryPct = telemetry?.batteryPct,
+                ramFreeMb = telemetry?.ramFreeMb,
+                ramTotalMb = telemetry?.ramTotalMb,
+                cpuPct = telemetry?.cpuPct,
+                wifiRssi = telemetry?.wifiRssi,
+                uptimeS = telemetry?.uptimeS,
+            ),
         )
         val request = authed(
             Request.Builder()

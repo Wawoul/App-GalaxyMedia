@@ -6,9 +6,10 @@ Self-hosted digital signage for MSPs. No per-screen licensing - your server, you
 
 - **Multi-tenant**: MSP -> companies -> screen groups -> screens, with hard isolation
   between companies and per-editor company access lists.
-- **Content**: media library with folders, playlists (images, videos with per-item
-  mute, live web pages), split-screen layouts (presets or custom zones) with scrolling
-  tickers, and white-label branding per company.
+- **Content**: media library with folders - images (JPG, PNG, GIF, WebP, BMP) and
+  videos (MP4, MOV, WebM, MKV), validated by content sniffing, not file extension -
+  playlists (with per-item mute, live web pages), split-screen layouts (presets or
+  custom zones) with scrolling tickers, and white-label branding per company.
 - **Scheduling**: drag-on-calendar weekly scheduler with dayparting, overnight windows,
   bi-weekly/one-off recurrence, priorities, and a "Black Screen" mode that simulates
   the TV being off. Schedules run on the TV's own clock, so they keep switching offline.
@@ -16,11 +17,15 @@ Self-hosted digital signage for MSPs. No per-screen licensing - your server, you
   (checksum-verified), keeps playing through network outages and reboots, and
   self-updates from releases published in the admin - plus a zero-install **web player**
   (`/player` in any browser) for kiosk PCs, Raspberry Pis, and quick previews.
-  Both pair with a 6-character code.
-- **Operations**: live dashboard (online/offline, now playing, screenshots on demand),
-  offline alerts by email + Telegram (global and per-company recipients), proof-of-play
-  reports with CSV export, config export/import between companies, nightly backups.
-- **Security**: TLS-only, Argon2id + mandatory TOTP 2FA for MSP staff, encrypted secrets
+  Both pair with a 6-character code, and both support software display rotation
+  (portrait / flipped) per screen for sideways-mounted menu boards.
+- **Operations**: live dashboard (online/offline, now playing, screenshots on demand,
+  device health - battery, RAM, CPU, WiFi signal, storage, uptime - from Android
+  player heartbeats), offline alerts by email + Telegram (global and per-company
+  recipients), proof-of-play reports with CSV export, config export/import between
+  companies, nightly backups.
+- **Security**: TLS by default (plain-HTTP mode available for trusted LAN-only
+  installs), Argon2id + mandatory TOTP 2FA for MSP staff, encrypted secrets
   at rest, scoped revocable device tokens, signed download URLs, audit log, hardened
   systemd/nginx/ufw/fail2ban deployment. See [SECURITY.md](SECURITY.md).
 
@@ -67,20 +72,34 @@ and enroll 2FA. Updates: `git pull && docker compose up -d --build`.
 Backups in Docker: dump the DB and copy the media volume, e.g.
 `docker compose exec db pg_dump -U galaxy galaxy_media > backup.sql` on a cron.
 
-### Option B - bare-metal script (Proxmox LXC / Ubuntu VM)
+### Option B - install script (Proxmox LXC / Ubuntu VM)
 
-On a clean Ubuntu 24.04 machine (2 vCPU / 2 GB RAM is plenty to start):
+On a clean Ubuntu 24.04 machine. 1 vCPU / 1 GB RAM is enough - the whole stack
+(API + PostgreSQL + nginx) idles around 300 MB; give it 2 GB if you want faster
+on-box builds during install/update. Disk: ~5 GB for OS + app, then budget
+about **2× your media library** on top (the live files plus the nightly local
+backup, which hardlinks unchanged media so it costs one extra copy, not seven).
+20 GB total is comfortable for a typical image/short-video library; video-heavy
+fleets should size accordingly:
 
 ```bash
 git clone <this-repo> && cd <this-repo>
 sudo bash deploy/install.sh
 ```
 
-The script installs Node 22, PostgreSQL and nginx, generates all secrets, applies the
-security hardening (ufw, fail2ban, sandboxed systemd unit, unattended upgrades, TLS-only
-nginx), enables the nightly backup timer, and prints the first admin login. Point a
-domain (or a Cloudflare Tunnel) at it and set up the certificate as the script instructs.
-Updates: `sudo bash deploy/update.sh` from a fresh checkout.
+The installer asks two or three questions - how screens reach the server
+(public HTTPS domain, or **LAN-only via plain http:// and the machine's IP**),
+the hostname/IP, and the first admin email - then does everything else itself:
+Node 22, PostgreSQL, nginx, generated secrets, security hardening (ufw,
+fail2ban, sandboxed systemd unit, unattended upgrades), and the nightly backup
+timer. It ends with a summary of your admin URL, login, password, and next
+steps. Updates: `sudo bash deploy/update.sh` from a fresh checkout.
+
+**LAN-only mode**: if your TVs and admins are all on a trusted local network,
+pick option 2 at the first prompt and everything runs over `http://<server-ip>`
+with no domain, certificate, or tunnel needed - the player APK and web player
+both work over plain HTTP. You can switch to HTTPS later by re-running the
+installer in public mode. Use HTTPS for anything reachable from the internet.
 
 ### Then: put a player on each screen
 
@@ -90,7 +109,9 @@ Updates: `sudo bash deploy/update.sh` from a fresh checkout.
    your own - full beginner walkthrough and the signing trade-offs in [AppBuild.md](AppBuild.md).
 2. Upload it in the admin's **System** tab (this also gives you a download link for new TVs).
 3. Sideload it once per TV (USB stick or adb), enter your server URL, pair with the
-   on-screen code. All future app updates ship from the System tab automatically.
+   on-screen code. All future app updates ship from the System tab automatically -
+   for those OTA updates to install, allow **"Install unknown apps"** for the player
+   app on each TV (Settings → Apps → Special app access), ideally during setup.
 
 **Any browser (kiosk PCs, Raspberry Pi, quick previews - needs connectivity):**
 

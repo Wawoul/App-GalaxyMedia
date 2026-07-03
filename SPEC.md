@@ -83,8 +83,10 @@ MSP (platform owner)
 
 ## 4. Content management (MVP scope - all confirmed in)
 
-- **Media library** (per company): upload images (jpg/png/webp) and videos (mp4/h.264-h.265);
-  server generates thumbnails, stores duration/dimensions/checksums.
+- **Media library** (per company): upload images (jpg/png/gif/bmp/webp) and videos
+  (mp4/mov/webm/mkv - h.264/h.265/vp9 as supported by the player hardware); uploads are
+  validated by magic-byte sniffing, never by extension or Content-Type. Formats the TVs
+  can't decode natively (wmv/flv/avi/mpg) must be transcoded before upload.
 - **Web pages**: a "URL" content type rendered in the TV's WebView, with per-item refresh interval.
 - **Playlists**: ordered items (media or URL) with per-item duration (videos default to their
   natural length), drag-to-reorder, enable/disable items.
@@ -102,6 +104,8 @@ MSP (platform owner)
 - **Screen on/off hours** per group (player blanks the screen and pauses downloads outside hours;
   optionally use HDMI-CEC-less "black screen" since app-level power control on TCL is unreliable).
 - All times are **local to the screen's configured timezone** (per screen, default from group).
+- **Display rotation** per screen (0/90/180/270°): both players rotate content in software,
+  so portrait and upside-down mounted panels work without OS-level rotation support.
 
 ## 6. Android TV player app (Kotlin)
 
@@ -120,8 +124,10 @@ MSP (platform owner)
   - The dashboard shows the screen as offline, but the viewer in front of the TV never notices.
 - **Sync**: WebSocket connection for instant push ("content changed", "reload", "unpair",
   "identify" - flashes screen name); falls back to HTTP polling every 60 s if WS is blocked.
-- **Heartbeat** every 30-60 s: app version, IP, current item, storage free, uptime → powers the
-  status dashboard.
+- **Heartbeat** every 30-60 s: app version, IP, current item, plus device telemetry -
+  storage free, battery, RAM free/total, player CPU share, WiFi signal (RSSI), uptime →
+  powers the status dashboard's Health column. All telemetry fields are optional so
+  hardware without a battery (or on ethernet) simply omits them.
 - **Remote commands** from the UI: reload content, restart app, clear cache, take a screenshot
   (of the rendered content) for proof-of-play/support, trigger APK self-update.
 - **Self-update**: server hosts APK releases; app checks version, downloads and prompts/installs
@@ -198,7 +204,8 @@ The `install.sh` script applies all of this, not just the app:
 
 ### Android TV app
 
-- **Network security config**: cleartext traffic disabled; TLS required to the server. Optional
+- **Network security config**: TLS recommended and default; cleartext is permitted so
+  LAN-only installs (http:// + IP) work with the shipped APK. Optional
   certificate pinning mode for internal-CA deployments.
 - Device token stored via Android Keystore-backed **EncryptedSharedPreferences**; never logged.
 - APK **release-signed**; self-update verifies the download's signature/checksum against the

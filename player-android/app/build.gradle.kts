@@ -12,8 +12,8 @@ android {
         applicationId = "com.galaxymedia.player"
         minSdk = 24        // Android TV 7.0+ covers TCL sets
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
     }
 
     buildTypes {
@@ -23,11 +23,13 @@ android {
             // Release builds must be signed with your own keystore (never committed).
         }
         debug {
-            // Debug builds may talk to a plain-HTTP dev server on the LAN.
             manifestPlaceholders["cleartextPermitted"] = "true"
         }
     }
-    buildTypes.getByName("release").manifestPlaceholders["cleartextPermitted"] = "false"
+    // Cleartext stays permitted in release so LAN-only installs (http:// + IP,
+    // install.sh mode 2) work with the shipped APK. HTTPS is still the
+    // recommended deployment for anything beyond a trusted LAN (SPEC §8).
+    buildTypes.getByName("release").manifestPlaceholders["cleartextPermitted"] = "true"
 
     buildFeatures { buildConfig = true }
 

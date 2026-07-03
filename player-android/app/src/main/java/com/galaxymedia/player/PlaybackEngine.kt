@@ -104,8 +104,22 @@ private class ZonePlayer(
     }
 
     private suspend fun showImage(item: ManifestItem) {
-        val bitmap = BitmapFactory.decodeFile(cache.fileFor(item).absolutePath) ?: return
-        imageView.setImageBitmap(bitmap)
+        val file = cache.fileFor(item)
+        // ImageDecoder (API 28+) animates GIF/WebP; older TVs get the first frame.
+        val shown = if (android.os.Build.VERSION.SDK_INT >= 28) {
+            runCatching {
+                val drawable = android.graphics.ImageDecoder.decodeDrawable(
+                    android.graphics.ImageDecoder.createSource(file),
+                )
+                imageView.setImageDrawable(drawable)
+                (drawable as? android.graphics.drawable.AnimatedImageDrawable)?.start()
+                true
+            }.getOrDefault(false)
+        } else false
+        if (!shown) {
+            val bitmap = BitmapFactory.decodeFile(file.absolutePath) ?: return
+            imageView.setImageBitmap(bitmap)
+        }
         imageView.visibility = View.VISIBLE
         playerView.visibility = View.GONE
         webView.visibility = View.GONE

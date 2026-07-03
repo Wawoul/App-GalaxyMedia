@@ -15,6 +15,8 @@ export function Media({ company, canEdit }: { company: Company; canEdit: boolean
   const [error, setError] = useState('');
   const [uploading, setUploading] = useState<{ name: string; percent: number } | null>(null);
   const [movingId, setMovingId] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [sortBy, setSortBy] = useState<'name' | 'newest' | 'largest' | 'type'>('name');
   const fileInput = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
@@ -77,8 +79,23 @@ export function Media({ company, canEdit }: { company: Company; canEdit: boolean
   for (let f = folders.find((x) => x.id === currentFolder); f; f = folders.find((x) => x.id === f!.parent_id)) {
     trail.unshift(f);
   }
-  const subfolders = folders.filter((f) => f.parent_id === currentFolder);
-  const files = items.filter((m) => m.folder_id === currentFolder);
+  // Search matches across the whole library; otherwise show the current folder.
+  const query = search.trim().toLowerCase();
+  const subfolders = (query
+    ? folders.filter((f) => f.name.toLowerCase().includes(query))
+    : folders.filter((f) => f.parent_id === currentFolder)
+  ).sort((a, b) => a.name.localeCompare(b.name));
+  const files = (query
+    ? items.filter((m) => m.original_name.toLowerCase().includes(query))
+    : items.filter((m) => m.folder_id === currentFolder)
+  ).sort((a, b) => {
+    switch (sortBy) {
+      case 'newest': return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      case 'largest': return b.size_bytes - a.size_bytes;
+      case 'type': return a.mime.localeCompare(b.mime) || a.original_name.localeCompare(b.original_name);
+      default: return a.original_name.localeCompare(b.original_name);
+    }
+  });
   const folderChoices = [{ id: '', name: '(Library root)' }, ...folders.map((f) => ({ id: f.id, name: f.name }))];
 
   return (
@@ -87,28 +104,42 @@ export function Media({ company, canEdit }: { company: Company; canEdit: boolean
 
       <div className="panel row spread">
         <div className="row">
-          <span className="crumb" onClick={() => setCurrentFolder(null)}>Library</span>
+          <span className="crumb" onClick={() => { setSearch(''); setCurrentFolder(null); }}>Library</span>
           {trail.map((f) => (
             <span key={f.id}>
               <span className="muted"> / </span>
-              <span className="crumb" onClick={() => setCurrentFolder(f.id)}>{f.name}</span>
+              <span className="crumb" onClick={() => { setSearch(''); setCurrentFolder(f.id); }}>{f.name}</span>
             </span>
           ))}
         </div>
-        {canEdit && (
-          <div className="row">
-            <button className="secondary" onClick={createFolder}>+ New folder</button>
-            <input ref={fileInput} type="file" multiple accept="image/jpeg,image/png,image/webp,video/mp4"
-              onChange={(e) => upload(e.target.files)} disabled={uploading !== null} />
-            {uploading && (
-              <div className="row" style={{ minWidth: 240 }}>
-                <span className="muted">{uploading.name}</span>
-                <progress value={uploading.percent} max={100} style={{ width: 100 }} />
-                <span className="muted">{uploading.percent}%</span>
-              </div>
-            )}
-          </div>
-        )}
+        <div className="row">
+          <input placeholder="Search all media…" value={search} onChange={(e) => setSearch(e.target.value)}
+            style={{ width: 200 }} />
+          <select value={sortBy} onChange={(e) => setSortBy(e.target.value as typeof sortBy)}>
+            <option value="name">Sort: Name</option>
+            <option value="newest">Sort: Newest</option>
+            <option value="largest">Sort: Largest</option>
+            <option value="type">Sort: Type</option>
+          </select>
+          {canEdit && (
+            <>
+              <button className="secondary" onClick={createFolder}>+ New folder</button>
+              <input ref={fileInput} type="file" multiple style={{ display: 'none' }}
+                accept="image/jpeg,image/png,image/gif,image/bmp,image/webp,video/mp4,video/quicktime,video/webm,video/x-matroska,.mkv,.mov"
+                onChange={(e) => upload(e.target.files)} />
+              <button onClick={() => fileInput.current?.click()} disabled={uploading !== null}>
+                ⬆ Upload files
+              </button>
+              {uploading && (
+                <div className="row" style={{ minWidth: 240 }}>
+                  <span className="muted">{uploading.name}</span>
+                  <progress value={uploading.percent} max={100} style={{ width: 100 }} />
+                  <span className="muted">{uploading.percent}%</span>
+                </div>
+              )}
+            </>
+          )}
+        </div>
       </div>
 
       {error && <div className="error">{error}</div>}
@@ -124,7 +155,7 @@ export function Media({ company, canEdit }: { company: Company; canEdit: boolean
               return (
                 <tr key={f.id}>
                   <td style={{ fontSize: 22 }}>📁</td>
-                  <td><span className="crumb" onClick={() => setCurrentFolder(f.id)}>{f.name}</span></td>
+                  <td><span className="crumb" onClick={() => { setSearch(''); setCurrentFolder(f.id); }}>{f.name}</span></td>
                   <td className="muted">folder</td>
                   <td className="muted">{count} item{count === 1 ? '' : 's'}</td>
                   <td></td>
@@ -205,7 +236,9 @@ export function Media({ company, canEdit }: { company: Company; canEdit: boolean
             ))}
             {subfolders.length === 0 && files.length === 0 && (
               <tr><td colSpan={6} className="muted">
-                {currentFolder ? 'Empty folder.' : 'No media yet - upload images or videos above.'}
+                {query ? 'Nothing matches your search.'
+                  : currentFolder ? 'Empty folder.'
+                  : 'No media yet - upload images or videos above.'}
               </td></tr>
             )}
           </tbody>
