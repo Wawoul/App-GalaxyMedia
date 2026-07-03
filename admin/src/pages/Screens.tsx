@@ -102,6 +102,7 @@ export function Screens({
         case 'reload':
         case 'restart':
         case 'clear_cache':
+        case 'update':
         case 'screenshot': {
           if (action === 'restart' && !confirm(`Restart the player app on "${screen.name}"? Playback briefly interrupts.`)) {
             break;
@@ -109,6 +110,16 @@ export function Screens({
           if (
             action === 'clear_cache' &&
             !confirm(`Clear "${screen.name}"'s local media cache? Everything re-downloads, which can take a while and uses bandwidth.`)
+          ) {
+            break;
+          }
+          if (
+            action === 'update' &&
+            !confirm(
+              `Install the latest player app on "${screen.name}"? Android shows an on-screen confirm ` +
+              `prompt that STOPS playback until someone taps it at the TV - only send this if a tech is ` +
+              `on-site right now to approve it.`,
+            )
           ) {
             break;
           }
@@ -331,6 +342,7 @@ export function Screens({
                         <option value="reload">Reload content</option>
                         <option value="restart">Restart app</option>
                         <option value="clear_cache">Clear media cache</option>
+                        <option value="update">Install latest app update…</option>
                         <option value="screenshot">Take screenshot</option>
                         {s.screenshot_url && <option value="view_shot">{shotId === s.id ? 'Hide screenshot' : 'View screenshot'}</option>}
                         <option value="rename">Rename</option>

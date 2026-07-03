@@ -129,9 +129,13 @@ MSP (platform owner)
   powers the status dashboard's Health column. All telemetry fields are optional so
   hardware without a battery (or on ethernet) simply omits them.
 - **Remote commands** from the UI: reload content, restart app, clear cache, take a screenshot
-  (of the rendered content) for proof-of-play/support, trigger APK self-update.
-- **Self-update**: server hosts APK releases; app checks version, downloads and prompts/installs
-  (silent install isn't possible on stock TCL without device-owner provisioning - document both paths).
+  (of the rendered content) for proof-of-play/support, install the latest app update.
+- **Self-update**: server hosts APK releases; the app never checks/installs on its own -
+  installing shows a system confirm prompt (silent install isn't possible on stock TCL
+  without device-owner provisioning) that stops playback until someone at the TV taps it,
+  so it only runs when the "Install latest app update" command is sent to that one screen,
+  which a tech sends deliberately while on-site. "Reload content" only re-syncs playlists/
+  schedules and never triggers an update check.
 - **Rendering**: single Activity; zones are composed views - Media3 `PlayerView` for video,
   `ImageView` with preloading for images, `WebView` for URLs, custom marquee view for tickers.
   Hardware-accelerated, no black flashes between items (double-buffer image swaps, pre-buffer next video).

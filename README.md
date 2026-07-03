@@ -17,9 +17,11 @@ Self-hosted digital signage for MSPs. No per-screen licensing, No "Freemium" - y
   one-off recurrence, priorities, and a "Black Screen" mode that simulates the TV being
   off. Schedules run on the TV's own clock, so they keep switching offline.
 - **Players**: a native Android TV app (TCL etc.) that caches everything locally
-  (checksum-verified), keeps playing through network outages and reboots, and
-  self-updates from releases published in the admin - plus a zero-install **web player**
-  (`/player` in any browser) for kiosk PCs, Raspberry Pis, and quick previews.
+  (checksum-verified) and keeps playing through network outages and reboots - updates
+  from releases published in the admin install per screen on command, deliberately not
+  automatically, since installing needs someone on-site to approve the on-screen prompt -
+  plus a zero-install **web player** (`/player` in any browser) for kiosk PCs, Raspberry
+  Pis, and quick previews.
   Both pair with a 6-character code, and both support software display rotation
   (portrait / flipped) per screen for sideways-mounted menu boards.
 - **Operations**: live dashboard with search/sort/filter (online/offline, now playing,

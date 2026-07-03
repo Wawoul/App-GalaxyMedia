@@ -88,7 +88,7 @@ export function System() {
         versionCode,
         versionName,
       });
-      setStatus('Release published. TVs pick it up on their next update check (within ~6 hours), or use Reload on a screen to hurry one along.');
+      setStatus('Release published. Nothing installs automatically - use "Install latest app update…" per screen on the Screens tab when a tech is on-site.');
       setRelease(await api<ApkRelease | null>('/api/system/apk'));
       setVersionCode('');
       setVersionName('');
@@ -145,13 +145,15 @@ export function System() {
       <div className="panel">
         <strong>Player app release (self-update)</strong>
         <div className="muted" style={{ margin: '6px 0 12px' }}>
-          Upload a signed release APK and every paired TV offers/installs the update itself.
-          Version code must be higher than what the TVs run (it is in
+          Upload a signed release APK here, then trigger the install per screen from the
+          <strong> Screens</strong> tab's "Install latest app update…" action - it's deliberately
+          not automatic or bundled with Reload, since installing shows an on-screen Android
+          confirm prompt that stops playback until someone at the TV taps it, only send it
+          when a tech is on-site. Version code must be higher than what the TVs run (it is in
           player-android/app/build.gradle.kts, bump it each release). The TV verifies the
           file hash and the Android system verifies the signature before installing.
-          For updates to install, each TV needs <strong>"Install unknown apps"</strong> allowed
-          for the Galaxy Player app (Settings → Apps → Special app access → Install unknown
-          apps) - Android prompts for this during the first update if it isn't set.
+          For the install to succeed, that TV needs <strong>"Install unknown apps"</strong> allowed
+          for the Galaxy Player app (Settings → Apps → Special app access → Install unknown apps).
         </div>
         {release ? (
           <div className="row" style={{ marginBottom: 12 }}>

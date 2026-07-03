@@ -4,7 +4,7 @@ import { query } from './db/pool.js';
 export type DevicePush =
   | { type: 'sync' } // content changed - refetch the manifest
   | { type: 'unpair' }
-  | { type: 'command'; command: 'reload' | 'identify' | 'restart' | 'clear_cache' | 'screenshot' };
+  | { type: 'command'; command: 'reload' | 'identify' | 'restart' | 'clear_cache' | 'screenshot' | 'update' };
 
 const sockets = new Map<string, Set<WebSocket>>(); // screenId → connections
 

@@ -95,6 +95,18 @@ cd $env:LOCALAPPDATA\Android\Sdk\platform-tools
 ```
 (`-r` reinstalls/updates in place - use the same command for every new build.)
 
+**TCL sets specifically** - the USB-stick menu path and a couple of settings are in
+different places than stock Android TV:
+1. Plug in the USB stick with the APK on it.
+2. Open **"Safety Guard"** (or any file explorer app if that's not present) →
+   **App manager → Installation → USB** → select Galaxy Media Player → install.
+3. **Settings → Apps → Special access → Energy optimisations** → disable it for
+   Galaxy Media Player (TCL's battery optimizer otherwise throttles/kills background
+   apps, which fights the "stays running unattended" requirement).
+4. **Settings → Security & restrictions → Unknown sources** → enable for
+   Galaxy Media Player (TCL's equivalent of "Install unknown apps" - needed both for
+   this sideload and for approving app updates later).
+
 ## 6. First launch & pairing
 
 1. Before touching the TV: in the admin UI (<https://signage.example.com>) upload an image or two
@@ -108,11 +120,12 @@ cd $env:LOCALAPPDATA\Android\Sdk\platform-tools
 **Then run the two acceptance tests:** pull the TV's network mid-playback (must keep looping),
 and reboot it offline (must come back playing with no remote-control input).
 
-7. **For OTA self-updates to work**, allow "Install unknown apps" for the *Galaxy Media
+7. **For app updates to install later**, allow "Install unknown apps" for the *Galaxy Media
    Player* app itself: **Settings → Apps → Special app access → Install unknown apps →
    Galaxy Media Player → Allow**. (Step 5's prompt only covered the file manager/adb.
-   If you skip this, Android shows the permission screen on the TV at the first OTA
-   update instead - one click with the remote, but better done now while you're here.)
+   If you skip this, Android shows the permission screen on the TV the first time a tech
+   sends an "Install latest app update" command instead - one click with the remote, but
+   better done now while you're here.)
 
 ## 7. Releasing updates (after the first install)
 
@@ -123,9 +136,11 @@ You only sideload manually once per TV. For every release after that:
 2. Build the signed release APK exactly as in step 3 (same keystore - a different key
    is rejected by Android).
 3. Admin UI -> **System** tab -> upload the APK with its version code/name.
-4. TVs check every ~6 hours (or immediately when you press **Reload** on the Screens
-   page), verify the file hash, and show the install prompt. The first time, grant
-   "Install unknown apps" to Galaxy Media Player on the TV when asked.
+4. Nothing installs on its own - on the Screens page, use **"Install latest app
+   update…"** on each TV once a tech is on-site to approve the resulting Android
+   install prompt (it stops playback until someone taps it, which is exactly why
+   it isn't automatic or bundled with Reload). The TV verifies the file hash first;
+   the first time, grant "Install unknown apps" to Galaxy Media Player when asked.
 
 ## 8. Troubleshooting
 

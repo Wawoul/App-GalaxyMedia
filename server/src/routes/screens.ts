@@ -294,11 +294,14 @@ export function screenRoutes(app: FastifyInstance): void {
       .sendFile(`screenshots/${id}.jpg`);
   });
 
-  // Remote commands: reload | identify | restart | clear_cache | screenshot
+  // Remote commands: reload | identify | restart | clear_cache | screenshot | update
+  // "update" is deliberate and separate from "reload": installing shows a system
+  // confirm prompt on the TV that pauses playback until someone is on-site to tap
+  // it, so it must only ever be sent when a tech explicitly asks for it.
   app.post('/api/screens/:id/command', async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const body = z
-      .object({ command: z.enum(['reload', 'identify', 'restart', 'clear_cache', 'screenshot']) })
+      .object({ command: z.enum(['reload', 'identify', 'restart', 'clear_cache', 'screenshot', 'update']) })
       .parse(req.body);
     const { rows } = await query<{ company_id: string }>('SELECT company_id FROM screens WHERE id = $1', [id]);
     if (!rows[0]) return reply.code(404).send({ error: 'not_found' });

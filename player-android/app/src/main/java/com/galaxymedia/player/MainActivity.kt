@@ -25,7 +25,6 @@ import org.json.JSONObject
 
 private const val HEARTBEAT_INTERVAL_MS = 45_000L
 private const val POLL_FALLBACK_MS = 60_000L
-private const val UPDATE_CHECK_MS = 6 * 3600_000L
 private const val CONNECT_RETRY_DELAY_MS = 10_000L
 private const val MAX_CONNECT_ATTEMPTS = 5 // give up and let the user fix the URL instead of retrying forever
 
@@ -326,7 +325,6 @@ class MainActivity : AppCompatActivity() {
         syncJob?.cancel()
         syncJob = lifecycleScope.launch {
             var lastSync = 0L
-            var lastUpdateCheck = 0L
             while (true) {
                 try {
                     // Periodic full sync as a fallback when WS is blocked.
@@ -334,11 +332,10 @@ class MainActivity : AppCompatActivity() {
                         syncNow()
                         lastSync = System.currentTimeMillis()
                     }
-                    // Self-update check every ~6 hours.
-                    if (System.currentTimeMillis() - lastUpdateCheck > UPDATE_CHECK_MS) {
-                        lastUpdateCheck = System.currentTimeMillis()
-                        runCatching { updater.checkAndInstall() }
-                    }
+                    // Self-update is deliberately NOT automatic: installing shows a
+                    // system confirm prompt that pauses playback until someone is
+                    // physically at the TV to tap it. Only the explicit "update"
+                    // remote command (below) triggers a check-and-install.
                     val plays = synchronized(playsBuffer) { playsBuffer.toList() }
                     api.heartbeat(BuildConfig.VERSION_NAME, currentItem, cache.freeSpaceMb(), plays, telemetry.sample())
                     // Delivered: drop what we sent (new plays may have arrived meanwhile).
@@ -394,10 +391,7 @@ class MainActivity : AppCompatActivity() {
                         "sync" -> lifecycleScope.launch { runCatching { syncNow() } }
                         "unpair" -> onUnpaired()
                         "command" -> when (message.optString("command")) {
-                            "reload" -> lifecycleScope.launch {
-                                runCatching { syncNow() }
-                                runCatching { updater.checkAndInstall() }
-                            }
+                            "reload" -> lifecycleScope.launch { runCatching { syncNow() } }
                             "screenshot" -> captureAndUpload()
                             "identify" -> identify()
                             "clear_cache" -> {
@@ -405,6 +399,10 @@ class MainActivity : AppCompatActivity() {
                                 lifecycleScope.launch { runCatching { syncNow() } }
                             }
                             "restart" -> recreate()
+                            // Explicit, tech-initiated only (SPEC): installing shows a
+                            // system confirm prompt that pauses playback until someone
+                            // is on-site to tap it, so this must never fire on its own.
+                            "update" -> lifecycleScope.launch { runCatching { updater.checkAndInstall() } }
                         }
                     }
                 }
