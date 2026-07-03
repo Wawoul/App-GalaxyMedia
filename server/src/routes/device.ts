@@ -57,7 +57,15 @@ export function deviceRoutes(app: FastifyInstance): void {
       if (!pr) return reply.code(404).send({ error: 'not_found' });
 
       if (pr.screen_id && pr.device_token) {
-        await query('UPDATE pairing_requests SET device_token = NULL WHERE id = $1', [requestId]);
+        // Deliberately NOT single-shot: if the response carrying the token is
+        // lost (flaky TV wifi, proxy timeout), the device's retry must still
+        // succeed or it's stuck un-pairable. The token stays retrievable until
+        // the request's own expiry (short); only this request's secret UUID can
+        // fetch it, and it's wiped on the first poll after expiry.
+        if (pr.expires_at < new Date()) {
+          await query('UPDATE pairing_requests SET device_token = NULL WHERE id = $1', [requestId]);
+          return reply.code(410).send({ error: 'expired' });
+        }
         return reply.send({ status: 'paired', screenId: pr.screen_id, deviceToken: pr.device_token });
       }
       if (pr.screen_id) return reply.code(410).send({ error: 'token_already_delivered' });

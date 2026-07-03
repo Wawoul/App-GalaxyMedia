@@ -43,7 +43,10 @@ export function Companies({
         target = await api<Company>('/api/companies', { body: { name: name.trim() } });
       }
 
-      const summary = await api<{ groups: number; playlists: number; layouts: number; assignments: number; skippedItems: number }>(
+      const summary = await api<{
+        groups: number; playlists: number; layouts: number; assignments: number;
+        skippedItems: number; skippedLayouts: number;
+      }>(
         `/api/companies/${target.id}/import`,
         { body: doc },
       );
@@ -52,6 +55,9 @@ export function Companies({
         `${summary.layouts} layouts, ${summary.assignments} schedule entries.` +
         (summary.skippedItems > 0
           ? ` ${summary.skippedItems} playlist item(s) skipped - upload the matching media files first, then re-import.`
+          : '') +
+        (summary.skippedLayouts > 0
+          ? ` ${summary.skippedLayouts} layout(s) skipped - a required zone's playlist didn't import.`
           : ''),
       );
       await reload();
@@ -112,6 +118,9 @@ export function Companies({
                 <td className="muted">{c.screen_count}</td>
                 <td>
                   <input
+                    // key on the server value so a concurrent change (or import)
+                    // remounts the input instead of keeping stale typed text
+                    key={`emails-${c.id}-${c.alert_emails}`}
                     defaultValue={c.alert_emails}
                     placeholder="client@example.com (optional)"
                     style={{ minWidth: 220 }}
@@ -127,6 +136,7 @@ export function Companies({
                 </td>
                 <td>
                   <input
+                    key={`brand-${c.id}-${c.brand_name}`}
                     defaultValue={c.brand_name}
                     placeholder="Shown on TVs (optional)"
                     style={{ minWidth: 160 }}

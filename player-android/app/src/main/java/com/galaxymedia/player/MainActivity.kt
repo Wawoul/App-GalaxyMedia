@@ -500,6 +500,10 @@ class MainActivity : AppCompatActivity() {
         webSocket?.cancel()
         engine.stop()
         cache.clear()
+        // A box that gets unpaired is usually about to be paired to a
+        // DIFFERENT screen - without this, its first heartbeat there would
+        // flush proof-of-play records naming the previous screen's content.
+        synchronized(playsBuffer) { playsBuffer.clear() }
         prefs.clearPairing()
         statusView.visibility = View.VISIBLE
         startPairing()

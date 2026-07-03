@@ -194,11 +194,16 @@ export function WebPlayer() {
     setPhase('pairing');
   }, []);
 
+  const syncSeq = useRef(0);
   const sync = useCallback(async () => {
+    const seq = ++syncSeq.current;
     const res = await deviceFetch('/api/device/manifest');
     if (res.status === 401) return unpair();
     if (!res.ok) return;
     const next = (await res.json()) as Manifest;
+    // Two rapid admin edits fire two WS sync pushes; if the network reorders
+    // the responses, the older one must not clobber the newer manifest.
+    if (seq !== syncSeq.current) return;
     setManifest(next);
     localStorage.setItem(MANIFEST_KEY, JSON.stringify(next));
   }, [unpair]);

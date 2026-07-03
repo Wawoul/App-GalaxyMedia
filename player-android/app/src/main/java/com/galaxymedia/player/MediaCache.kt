@@ -2,6 +2,8 @@ package com.galaxymedia.player
 
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -14,6 +16,11 @@ import java.security.MessageDigest
  */
 class MediaCache(context: Context, private val http: OkHttpClient) {
     private val dir = File(context.filesDir, "media").apply { mkdirs() }
+    // MainActivity can trigger syncAll from independent paths (periodic poll,
+    // a WS "sync" push, "reload") - without this, two overlapping calls would
+    // both truncate-write the same "$mediaId.tmp" file, and an older call's
+    // prune() could delete what a newer, still-running call just verified.
+    private val syncMutex = Mutex()
 
     fun fileFor(item: ManifestItem): File = File(dir, "${item.mediaId}.bin")
 
@@ -29,7 +36,7 @@ class MediaCache(context: Context, private val http: OkHttpClient) {
     suspend fun syncAll(
         items: List<ManifestItem>,
         onProgress: ((percent: Int) -> Unit)? = null,
-    ) = withContext(Dispatchers.IO) {
+    ) = syncMutex.withLock { withContext(Dispatchers.IO) {
         val missing = items.filter { item ->
             val mediaId = item.mediaId
             mediaId != null && item.url != null &&
@@ -67,7 +74,7 @@ class MediaCache(context: Context, private val http: OkHttpClient) {
         }
         if (missing.isNotEmpty()) onProgress?.invoke(100)
         prune(items.mapNotNull { it.mediaId }.toSet())
-    }
+    } }
 
     /** Drop cached files no longer referenced by the manifest. */
     private fun prune(activeMediaIds: Set<String>) {

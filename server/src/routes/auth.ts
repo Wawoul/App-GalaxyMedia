@@ -144,6 +144,19 @@ export function authRoutes(app: FastifyInstance): void {
         audit({ userId: user.id, action: 'auth.2fa_failed', ip: req.ip });
         return reply.code(401).send({ error: 'bad_code' });
       }
+      if (isTotp) {
+        // Consume-once: a TOTP code stays valid for ~90s (window ±1), so an
+        // observed code could otherwise open a second session. The WHERE makes
+        // the check-and-set atomic even across concurrent attempts.
+        const { rowCount } = await query(
+          'UPDATE users SET totp_last_used = $2 WHERE id = $1 AND totp_last_used IS DISTINCT FROM $2',
+          [user.id, codeHash],
+        );
+        if (!rowCount) {
+          audit({ userId: user.id, action: 'auth.2fa_replayed', ip: req.ip });
+          return reply.code(401).send({ error: 'bad_code' });
+        }
+      }
       if (isRecovery) {
         await query('UPDATE users SET recovery_codes = array_remove(recovery_codes, $2) WHERE id = $1', [
           user.id,

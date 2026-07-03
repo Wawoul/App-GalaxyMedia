@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { query, withTransaction } from '../db/pool.js';
 import { audit } from '../lib/audit.js';
 import { canAccessCompany } from '../lib/permissions.js';
+import { validatePresetZones } from '../lib/presets.js';
 import { requireUser } from '../plugins/auth.js';
 import { notifyCompany } from '../ws.js';
 
@@ -218,7 +219,7 @@ export function transferRoutes(app: FastifyInstance): void {
     }
     const doc = importSchema.parse(req.body);
 
-    const summary = { groups: 0, playlists: 0, layouts: 0, assignments: 0, skippedItems: 0 };
+    const summary = { groups: 0, playlists: 0, layouts: 0, assignments: 0, skippedItems: 0, skippedLayouts: 0 };
     await withTransaction(async (tx) => {
       // Groups: reuse by name, create missing.
       const groupIds = new Map<string, string>();
@@ -291,9 +292,17 @@ export function transferRoutes(app: FastifyInstance): void {
             playlistId: zone.playlist ? (playlistIds.get(zone.playlist) ?? null) : null,
             tickerTexts: zone.tickerTexts ?? null,
           })) ?? null;
+        const zones = { main, side, ticker: l.zones.ticker ?? null, custom };
+        // A referenced playlist that didn't import (name typo, hand-edited
+        // export) would otherwise silently create a layout with an empty
+        // required zone - something the direct-create endpoint would reject.
+        if (validatePresetZones(l.preset, zones)) {
+          summary.skippedLayouts++;
+          continue;
+        }
         const { rows } = await tx.query<{ id: string }>(
           'INSERT INTO layouts (company_id, name, preset, zones) VALUES ($1, $2, $3, $4) RETURNING id',
-          [companyId, l.name, l.preset, JSON.stringify({ main, side, ticker: l.zones.ticker ?? null, custom })],
+          [companyId, l.name, l.preset, JSON.stringify(zones)],
         );
         layoutIds.set(l.name, rows[0]!.id);
         summary.layouts++;

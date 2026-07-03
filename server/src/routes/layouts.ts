@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { query } from '../db/pool.js';
 import { audit } from '../lib/audit.js';
 import { canAccessCompany } from '../lib/permissions.js';
-import { LAYOUT_PRESETS } from '../lib/presets.js';
+import { validatePresetZones } from '../lib/presets.js';
 import { requireUser } from '../plugins/auth.js';
 import { notifyCompany } from '../ws.js';
 
@@ -82,16 +82,8 @@ export function layoutRoutes(app: FastifyInstance): void {
       }
     }
     // The preset's zones must be filled in (ticker needs at least one line).
-    if (body.preset !== 'custom') {
-      const geometry = LAYOUT_PRESETS[body.preset]!;
-      for (const zone of geometry) {
-        if (zone.key === 'ticker') {
-          if (!body.zones.ticker?.texts.length) return reply.code(400).send({ error: 'ticker_text_required' });
-        } else if (!body.zones[zone.key]) {
-          return reply.code(400).send({ error: `zone_${zone.key}_playlist_required` });
-        }
-      }
-    }
+    const zoneError = validatePresetZones(body.preset, body.zones);
+    if (zoneError) return reply.code(400).send({ error: zoneError });
 
     const { rows } = await query(
       `INSERT INTO layouts (company_id, name, preset, zones) VALUES ($1, $2, $3, $4)

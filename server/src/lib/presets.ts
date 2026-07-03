@@ -31,3 +31,30 @@ export const LAYOUT_PRESETS: Record<string, ZoneGeometry[]> = {
     { key: 'side', x: 0.5, y: 0, w: 0.5, h: 1 },
   ],
 };
+
+/** The shape both the create endpoint and the import path validate. */
+export interface LayoutZones {
+  main?: string | null | undefined;
+  side?: string | null | undefined;
+  ticker?: { texts: string[] } | null | undefined;
+  custom?: unknown[] | null | undefined;
+}
+
+/**
+ * Returns the missing-zone error key ('zone_side_playlist_required', etc.) for a
+ * non-custom preset whose required zones aren't filled in, or null when valid.
+ * Shared so import can't create broken layouts the create endpoint would reject.
+ */
+export function validatePresetZones(preset: string, zones: LayoutZones): string | null {
+  if (preset === 'custom') return null;
+  const geometry = LAYOUT_PRESETS[preset];
+  if (!geometry) return 'unknown_preset';
+  for (const zone of geometry) {
+    if (zone.key === 'ticker') {
+      if (!zones.ticker?.texts.length) return 'ticker_text_required';
+    } else if (!zones[zone.key]) {
+      return `zone_${zone.key}_playlist_required`;
+    }
+  }
+  return null;
+}

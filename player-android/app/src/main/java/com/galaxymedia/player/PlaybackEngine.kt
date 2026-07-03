@@ -109,6 +109,11 @@ private class ZonePlayer(
     }
 
     private suspend fun showImage(item: ManifestItem) {
+        // Stop the previous frame's animated GIF/WebP before swapping - the
+        // playlist loop swaps images every ~10s by default, and each unstopped
+        // AnimatedImageDrawable keeps decoding in the background otherwise,
+        // piling up native decoder/frame-buffer memory on a TV box.
+        (imageView.drawable as? android.graphics.drawable.AnimatedImageDrawable)?.stop()
         val file = cache.fileFor(item)
         // ImageDecoder (API 28+) animates GIF/WebP; older TVs get the first frame.
         val shown = if (android.os.Build.VERSION.SDK_INT >= 28) {

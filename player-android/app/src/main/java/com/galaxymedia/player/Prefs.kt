@@ -10,13 +10,28 @@ import androidx.security.crypto.MasterKey
  * The device token never touches plain SharedPreferences or logs.
  */
 class Prefs(context: Context) {
-    private val prefs: SharedPreferences
+    private val prefs: SharedPreferences = createStore(context)
 
-    init {
+    private fun createStore(context: Context): SharedPreferences =
+        runCatching { buildEncryptedPrefs(context) }.getOrElse {
+            // Keystore/prefs corruption (seen after OS upgrades or a botched
+            // backup restore) would otherwise crash this app on every launch -
+            // a permanent brick on unattended hardware. Wipe and recreate a
+            // fresh, empty store instead: the box just re-pairs, which beats
+            // never coming back at all.
+            context.deleteSharedPreferences("galaxy_secure")
+            runCatching {
+                java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+                    .deleteEntry(MasterKey.DEFAULT_MASTER_KEY_ALIAS)
+            }
+            buildEncryptedPrefs(context)
+        }
+
+    private fun buildEncryptedPrefs(context: Context): SharedPreferences {
         val masterKey = MasterKey.Builder(context)
             .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
             .build()
-        prefs = EncryptedSharedPreferences.create(
+        return EncryptedSharedPreferences.create(
             context,
             "galaxy_secure",
             masterKey,
