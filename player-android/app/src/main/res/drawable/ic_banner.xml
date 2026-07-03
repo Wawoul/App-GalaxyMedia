@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android TV launcher banner: must be a 320x180 (16:9) rectangle, unlike
+     ic_launcher's 108x108 square - reusing the square there stretched/cropped
+     it in the launcher's rectangular tile. Same mark, recentered here. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+    <path android:fillColor="#0f1420" android:pathData="M0,0h320v180h-320z" />
+    <path
+        android:fillColor="#5b8cff"
+        android:pathData="M160,58a32,32 0 1,0 0,64a32,32 0 1,0 0,-64zM160,66a24,24 0 1,1 0,48a24,24 0 1,1 0,-48z" />
+    <path android:fillColor="#e8ecf5" android:pathData="M152,76l24,14l-24,14z" />
+</vector>
