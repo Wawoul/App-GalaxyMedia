@@ -57,7 +57,9 @@ echo
 
 echo "==> Packages"
 apt-get update
-apt-get install -y curl ca-certificates gnupg rsync nginx postgresql ufw fail2ban unattended-upgrades openssl
+apt-get install -y curl ca-certificates gnupg rsync nginx postgresql ufw fail2ban unattended-upgrades openssl \
+  python3 make g++  # argon2's native module ships prebuilt binaries for most platforms;
+                     # these are the fallback if that lookup fails (notably on ARM boards)
 
 if ! command -v node >/dev/null || [[ "$(node -v | cut -c2-3)" -lt 22 ]]; then
   echo "==> Node.js 22"
