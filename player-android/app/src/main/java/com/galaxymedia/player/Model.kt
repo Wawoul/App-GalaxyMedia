@@ -46,6 +46,9 @@ data class HeartbeatPayload(
     val cpuPct: Int? = null,
     val wifiRssi: Int? = null,
     val uptimeS: Long? = null,
+    // Last uncaught exception since the previous confirmed report, if any (CrashReporter).
+    val lastCrashAt: String? = null,
+    val lastCrashMessage: String? = null,
 )
 
 @Serializable

@@ -24,6 +24,12 @@ function healthRows(s: Screen): [string, string][] {
     ['IP address', s.ip ?? '-'],
     ['App version', s.app_version ?? '-'],
     ['Last seen', s.last_seen_at ? new Date(s.last_seen_at).toLocaleString() : 'never'],
+    [
+      'Last crash',
+      s.last_crash_at
+        ? `${new Date(s.last_crash_at).toLocaleString()} - ${s.last_crash_message ?? 'unknown'}`
+        : 'none reported',
+    ],
   ];
 }
 

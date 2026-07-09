@@ -322,6 +322,9 @@ export function deviceRoutes(app: FastifyInstance): void {
             .array(z.object({ name: z.string().min(1).max(300), at: z.string().datetime() }))
             .max(500)
             .default([]),
+          // Last uncaught exception since the previous confirmed report, if any.
+          lastCrashAt: z.string().datetime().nullish(),
+          lastCrashMessage: z.string().max(500).nullish(),
         })
         .parse(req.body ?? {});
       await query(
@@ -329,7 +332,9 @@ export function deviceRoutes(app: FastifyInstance): void {
            ip = $3, current_item = $4, storage_free_mb = coalesce($5, storage_free_mb),
            battery_pct = coalesce($6, battery_pct), ram_free_mb = coalesce($7, ram_free_mb),
            ram_total_mb = coalesce($8, ram_total_mb), cpu_pct = coalesce($9, cpu_pct),
-           wifi_rssi = coalesce($10, wifi_rssi), uptime_s = coalesce($11, uptime_s)
+           wifi_rssi = coalesce($10, wifi_rssi), uptime_s = coalesce($11, uptime_s),
+           last_crash_at = coalesce($12, last_crash_at),
+           last_crash_message = coalesce($13, last_crash_message)
          WHERE id = $1`,
         [
           req.screenId,
@@ -343,6 +348,8 @@ export function deviceRoutes(app: FastifyInstance): void {
           body.cpuPct ?? null,
           body.wifiRssi ?? null,
           body.uptimeS ?? null,
+          body.lastCrashAt ?? null,
+          body.lastCrashMessage ?? null,
         ],
       );
       if (body.plays.length > 0) {

@@ -42,6 +42,8 @@ export interface Screen {
   cpu_pct: number | null;
   wifi_rssi: number | null;
   uptime_s: number | null;
+  last_crash_at: string | null;
+  last_crash_message: string | null;
   orientation: 0 | 90 | 180 | 270;
   group_ids: string[];
   playlist_name: string | null;

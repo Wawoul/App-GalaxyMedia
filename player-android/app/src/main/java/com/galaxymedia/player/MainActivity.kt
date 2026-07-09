@@ -63,6 +63,9 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        CrashReporter.install(this)
+        Watchdog.schedule(this)
+        Watchdog.markAlive(this)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         prefs = Prefs(this)
@@ -364,6 +367,10 @@ class MainActivity : AppCompatActivity() {
         syncJob = lifecycleScope.launch {
             var lastSync = 0L
             while (true) {
+                // Marks the app as alive regardless of network state - a screen
+                // playing fine from cache during an outage must not look "stuck"
+                // to the watchdog just because the network calls below fail.
+                Watchdog.markAlive(this@MainActivity)
                 try {
                     // Periodic full sync as a fallback when WS is blocked.
                     if (System.currentTimeMillis() - lastSync > POLL_FALLBACK_MS) {
@@ -375,14 +382,19 @@ class MainActivity : AppCompatActivity() {
                     // physically at the TV to tap it. Only the explicit "update"
                     // remote command (below) triggers a check-and-install.
                     val plays = synchronized(playsBuffer) { playsBuffer.toList() }
-                    api.heartbeat(BuildConfig.VERSION_NAME, currentItem, cache.freeSpaceMb(), plays, telemetry.sample())
+                    val lastCrash = CrashReporter.pending(this@MainActivity)
+                    api.heartbeat(
+                        BuildConfig.VERSION_NAME, currentItem, cache.freeSpaceMb(), plays,
+                        telemetry.sample(), lastCrash,
+                    )
                     // Delivered: drop what we sent (new plays may have arrived meanwhile).
                     synchronized(playsBuffer) { repeat(plays.size) { if (playsBuffer.isNotEmpty()) playsBuffer.removeFirst() } }
+                    if (lastCrash != null) CrashReporter.clear(this@MainActivity)
                 } catch (e: RevokedException) {
                     onUnpaired()
                     return@launch
                 } catch (_: Exception) {
-                    // Offline: keep playing from cache; next loop retries (plays stay buffered).
+                    // Offline: keep playing from cache; next loop retries (plays/crash report stay buffered).
                 }
                 delay(HEARTBEAT_INTERVAL_MS)
             }

@@ -91,6 +91,7 @@ export function screenRoutes(app: FastifyInstance): void {
               s.ip, coalesce(med.original_name, s.current_item) AS current_item,
               s.storage_free_mb, s.battery_pct, s.ram_free_mb, s.ram_total_mb,
               s.cpu_pct, s.wifi_rssi, s.uptime_s::int AS uptime_s, s.orientation,
+              s.last_crash_at, s.last_crash_message,
               s.screenshot_at, s.created_at,
               c.name AS company_name,
               (s.device_token_jti IS NOT NULL) AS paired,
