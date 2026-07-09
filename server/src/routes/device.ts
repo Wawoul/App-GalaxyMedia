@@ -350,7 +350,8 @@ export function deviceRoutes(app: FastifyInstance): void {
           `INSERT INTO proof_of_play (company_id, screen_id, item_name, played_at)
            SELECT s.company_id, s.id, p.name, p.at::timestamptz
            FROM screens s, jsonb_to_recordset($2::jsonb) AS p(name text, at text)
-           WHERE s.id = $1`,
+           WHERE s.id = $1
+           ON CONFLICT (screen_id, item_name, played_at) DO NOTHING`,
           [req.screenId, JSON.stringify(body.plays)],
         );
       }
