@@ -109,9 +109,11 @@ MSP (platform owner)
 
 ## 6. Android TV player app (Kotlin)
 
-- **Boot behavior**: auto-start on TV boot (`BOOT_COMPLETED` receiver + persistent foreground
-  service), auto-restart on crash, stays in the foreground (kiosk-style; document the TCL
-  settings needed, e.g. disabling screensaver).
+- **Boot behavior**: auto-start on TV boot (`BOOT_COMPLETED` receiver), stays in the
+  foreground (kiosk-style; document the TCL settings needed, e.g. disabling screensaver).
+  A watchdog (`AlarmManager`-scheduled dead-man's-switch, independent of network state)
+  relaunches the app if it crashes or hangs, without needing the TV itself to reboot -
+  boot-time recovery alone only covers a power cut, not a live crash.
 - **Offline-first (hard requirement)**: downloads all assigned media to local storage ahead of
   time (checksum-verified), plays from cache; if the server is unreachable it keeps playing the
   last-known schedule indefinitely. Specifically:
@@ -125,9 +127,10 @@ MSP (platform owner)
 - **Sync**: WebSocket connection for instant push ("content changed", "reload", "unpair",
   "identify" - flashes screen name); falls back to HTTP polling every 60 s if WS is blocked.
 - **Heartbeat** every 30-60 s: app version, IP, current item, plus device telemetry -
-  storage free, battery, RAM free/total, player CPU share, WiFi signal (RSSI), uptime →
-  powers the status dashboard's Health column. All telemetry fields are optional so
-  hardware without a battery (or on ethernet) simply omits them.
+  storage free, battery, RAM free/total, player CPU share, WiFi signal (RSSI), uptime,
+  last uncaught-exception summary if the watchdog above recovered one → powers the
+  status dashboard's Health column. All telemetry fields are optional so hardware
+  without a battery (or on ethernet) simply omits them.
 - **Remote commands** from the UI: reload content, restart app, clear cache, take a screenshot
   (of the rendered content) for proof-of-play/support, install the latest app update.
 - **Self-update**: server hosts APK releases; the app never checks/installs on its own -
@@ -255,7 +258,10 @@ All three phases are implemented (2026-07-02):
 Beyond the spec, also built: a **web player** at `/player` (any browser in kiosk mode -
 pairing, playlists, layouts/tickers, schedules, streams, remote commands; best-effort
 offline via the browser cache), Docker Compose deployment, config export/import,
-nightly backups, and live stream (HLS/DASH) playlist items.
+nightly backups, live stream (HLS/DASH) playlist items, admin-initiated password
+reset, a crash watchdog with reporting for the Android player, and deduped
+proof-of-play ingestion (a resent heartbeat batch after a lost response no longer
+double-counts).
 
 Still open: drag-to-move/resize calendar blocks, a canvas-based layout editor (custom
 zones are numeric percentages today), per-company Telegram chats, media quality

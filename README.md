@@ -19,20 +19,23 @@ Self-hosted digital signage for MSPs. No per-screen licensing, No "Freemium" - y
   one-off recurrence, priorities, and a "Black Screen" mode that simulates the TV being
   off. Schedules run on the TV's own clock, so they keep switching offline.
 - **Players**: a native Android TV app (TCL etc.) that caches everything locally
-  (checksum-verified) and keeps playing through network outages and reboots - updates
-  from releases published in the admin install per screen on command, deliberately not
-  automatically, since installing needs someone on-site to approve the on-screen prompt -
+  (checksum-verified) and keeps playing through network outages, reboots, and even an
+  app crash - a watchdog relaunches it without anyone touching the TV, and the crash
+  itself is reported back so it shows up in the dashboard instead of just going dark -
+  updates from releases published in the admin install per screen on command, deliberately
+  not automatically, since installing needs someone on-site to approve the on-screen prompt -
   plus a zero-install **web player** (`/player` in any browser) for kiosk PCs, Raspberry
   Pis, and quick previews.
   Both pair with a 6-character code, and both support software display rotation
   (portrait / flipped) per screen for sideways-mounted menu boards.
 - **Operations**: live dashboard with search/sort/filter (online/offline, now playing,
   remote reload/identify/restart/clear-cache, screenshots on demand, device health -
-  battery, RAM, CPU, WiFi signal, storage, uptime - from Android player heartbeats),
-  host server stats (CPU load, memory, disk space) on the System tab, offline alerts
-  by email + Telegram (configurable threshold, global and per-company recipients,
-  test-send), proof-of-play reports with CSV export, config export/import between
-  companies, nightly backups.
+  battery, RAM, CPU, WiFi signal, storage, uptime, last reported crash - from Android
+  player heartbeats), host server stats (CPU load, memory, disk space) on the System tab,
+  offline alerts by email + Telegram (configurable threshold, global and per-company
+  recipients, test-send), proof-of-play reports with CSV export, config export/import
+  between companies, nightly backups, admin-initiated password reset for users who
+  forget theirs.
 - **Security**: TLS by default (plain-HTTP mode available for trusted LAN-only
   installs), Argon2id + mandatory TOTP 2FA for MSP staff, encrypted secrets
   at rest, scoped revocable device tokens, signed download URLs, rate-limited device
