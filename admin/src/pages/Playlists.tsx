@@ -8,6 +8,17 @@ const isStreamUrl = (url: string) => {
   return path.endsWith('.m3u8') || path.endsWith('.mpd');
 };
 
+/** "3600" in a seconds field doesn't read as an hour; this spells it out. */
+function humanDuration(ms: number): string {
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds} sec`;
+  const minutes = seconds / 60;
+  if (seconds % 60 === 0 && minutes < 60) return `${minutes} min`;
+  if (seconds % 3600 === 0) return `${seconds / 3600} hr`;
+  if (minutes < 60) return `${Math.floor(minutes)} min ${seconds % 60} sec`;
+  return `${Math.floor(seconds / 3600)} hr ${Math.round((seconds % 3600) / 60)} min`;
+}
+
 export function Playlists({ company, canEdit }: { company: Company; canEdit: boolean }) {
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [media, setMedia] = useState<MediaItem[]>([]);
@@ -223,13 +234,29 @@ export function Playlists({ company, canEdit }: { company: Company; canEdit: boo
                           setDirty(true);
                         }} />
                     ) : (
-                      <span className="muted">{item.duration_ms ? `${item.duration_ms / 1000}s` : 'auto'}</span>
+                      <span className="muted">
+                        {item.duration_ms ? humanDuration(item.duration_ms) : 'auto'}
+                      </span>
+                    )}
+                    {/* A stream restarting every few seconds just re-buffers
+                        forever and looks broken - the most likely way this field
+                        gets set wrong. */}
+                    {item.url && isStreamUrl(item.url) && item.duration_ms != null &&
+                      item.duration_ms < 60_000 && (
+                      <div className="error" style={{ fontSize: 12, marginTop: 4 }}>
+                        Restarts every {humanDuration(item.duration_ms)} - the stream will keep
+                        re-buffering. Use 3600 (1 hr) unless you have a reason not to.
+                      </div>
                     )}
                     {canEdit && (
                       // The unit is only in the column header otherwise, which is
                       // off-screen once the table scrolls.
                       <span className="muted" style={{ marginLeft: 6, fontSize: 12 }}>
-                        s{item.url && isStreamUrl(item.url) ? ' (restart interval)' : ''}
+                        {/* Spell the value back out: "3600" in a seconds field is
+                            hard to read as an hour, and "1" is easy to mistake for
+                            a sensible default when it means one second. */}
+                        s{item.duration_ms ? ` = ${humanDuration(item.duration_ms)}` : ''}
+                        {item.url && isStreamUrl(item.url) ? ' · restart interval' : ''}
                       </span>
                     )}
                   </td>
