@@ -9,6 +9,17 @@ function formatUptime(s: number): string {
   return days > 0 ? `${days}d ${hours}h` : hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
 }
 
+/** Coarse "how long ago" for timestamps that are history rather than live state. */
+function formatAgo(iso: string): string {
+  const seconds = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  const days = Math.floor(seconds / 86400);
+  if (days > 0) return days === 1 ? '1 day ago' : `${days} days ago`;
+  const hours = Math.floor(seconds / 3600);
+  if (hours > 0) return hours === 1 ? '1 hour ago' : `${hours} hours ago`;
+  const minutes = Math.floor(seconds / 60);
+  return minutes <= 1 ? 'just now' : `${minutes} minutes ago`;
+}
+
 /** Rows for the device-health popup; null values render as "-". */
 function healthRows(s: Screen): [string, string][] {
   return [
@@ -25,9 +36,12 @@ function healthRows(s: Screen): [string, string][] {
     ['App version', s.app_version ?? '-'],
     ['Last seen', s.last_seen_at ? new Date(s.last_seen_at).toLocaleString() : 'never'],
     [
+      // Historical, not a live status: the server keeps the last reported crash
+      // indefinitely, so label the age to stop an old entry reading as "broken now".
       'Last crash',
       s.last_crash_at
-        ? `${new Date(s.last_crash_at).toLocaleString()} - ${s.last_crash_message ?? 'unknown'}`
+        ? `${formatAgo(s.last_crash_at)} (${new Date(s.last_crash_at).toLocaleString()}) - ` +
+          `${s.last_crash_message ?? 'unknown'}`
         : 'none reported',
     ],
   ];

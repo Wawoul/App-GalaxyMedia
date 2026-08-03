@@ -25,6 +25,9 @@ import okhttp3.WebSocketListener
 import org.json.JSONObject
 
 private const val HEARTBEAT_INTERVAL_MS = 45_000L
+// Comfortably under Watchdog's staleness threshold so a healthy screen is never
+// misjudged, even if a tick is delayed.
+private const val ALIVE_MARK_INTERVAL_MS = 60_000L
 private const val POLL_FALLBACK_MS = 60_000L
 private const val CONNECT_RETRY_DELAY_MS = 10_000L
 private const val CONNECT_RETRY_SLOW_MS = 60_000L // background cadence after the fast attempts are exhausted
@@ -46,6 +49,7 @@ class MainActivity : AppCompatActivity() {
 
     private var webSocket: WebSocket? = null
     private var syncJob: Job? = null
+    private var aliveJob: Job? = null
     private var scheduleJob: Job? = null
     private var pairingJob: Job? = null
     // Bumped on every connectWebSocket() call; a scheduled reconnect checks
@@ -70,6 +74,16 @@ class MainActivity : AppCompatActivity() {
         PlayerService.start(this)
         Watchdog.schedule(this)
         Watchdog.markAlive(this)
+        // Liveness is tied to the Activity itself, not to the sync loop: that
+        // loop only runs once paired, so a screen sitting on the pairing code
+        // (or the server-URL prompt) would otherwise go stale and be relaunched
+        // out from under whoever is standing there setting it up.
+        aliveJob = lifecycleScope.launch {
+            while (true) {
+                delay(ALIVE_MARK_INTERVAL_MS)
+                Watchdog.markAlive(this@MainActivity)
+            }
+        }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         prefs = Prefs(this)
@@ -371,10 +385,6 @@ class MainActivity : AppCompatActivity() {
         syncJob = lifecycleScope.launch {
             var lastSync = 0L
             while (true) {
-                // Marks the app as alive regardless of network state - a screen
-                // playing fine from cache during an outage must not look "stuck"
-                // to the watchdog just because the network calls below fail.
-                Watchdog.markAlive(this@MainActivity)
                 try {
                     // Periodic full sync as a fallback when WS is blocked.
                     if (System.currentTimeMillis() - lastSync > POLL_FALLBACK_MS) {

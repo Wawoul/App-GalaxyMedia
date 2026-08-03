@@ -246,7 +246,17 @@ export function Users({ me, companies }: { me: Me; companies: Company[] }) {
                               return;
                             }
                             const temp = generateTempPassword();
-                            await run(() => api(`/api/users/${u.id}`, { method: 'PATCH', body: { password: temp } }));
+                            // Deliberately not run(): it swallows failures, which here
+                            // would show the admin a password the server never accepted -
+                            // they'd read it out and lock the user out of their account.
+                            setError('');
+                            try {
+                              await api(`/api/users/${u.id}`, { method: 'PATCH', body: { password: temp } });
+                            } catch (err) {
+                              setError(err instanceof Error ? err.message : 'password reset failed');
+                              return;
+                            }
+                            await load();
                             alert(`New temporary password for ${u.email}:\n\n${temp}\n\n` +
                               `This won't be shown again - copy it now and have them sign in and change it.`);
                           }}>
