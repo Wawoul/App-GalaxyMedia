@@ -9,8 +9,15 @@ import androidx.security.crypto.MasterKey
  * Device state in Android-Keystore-backed encrypted storage (SPEC §8).
  * The device token never touches plain SharedPreferences or logs.
  */
+/** Set when the encrypted store was unavailable and plain prefs are in use. */
+const val UNENCRYPTED_MARKER = "galaxy_unencrypted_fallback"
+
 class Prefs(context: Context) {
     private val prefs: SharedPreferences = createStore(context)
+
+    /** True when this device fell back to unencrypted storage (see createStore). */
+    val usingUnencryptedFallback: Boolean
+        get() = prefs.getBoolean(UNENCRYPTED_MARKER, false)
 
     private fun createStore(context: Context): SharedPreferences =
         runCatching { buildEncryptedPrefs(context) }.getOrElse {
@@ -24,7 +31,19 @@ class Prefs(context: Context) {
                 java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
                     .deleteEntry(MasterKey.DEFAULT_MASTER_KEY_ALIAS)
             }
-            buildEncryptedPrefs(context)
+            runCatching { buildEncryptedPrefs(context) }.getOrElse {
+                // The retry was unguarded, so a device whose Keystore/TEE is
+                // genuinely broken (not just its stored data) threw straight out
+                // of the constructor: crash, watchdog relaunch, crash again,
+                // every 5 minutes forever. That is exactly the brick this whole
+                // fallback exists to avoid. Plain prefs are a real downgrade -
+                // the device token is no longer encrypted at rest - but a screen
+                // that runs and can be unpaired remotely beats one that never
+                // boots again. UNENCRYPTED_MARKER lets the rest of the app know.
+                context
+                    .getSharedPreferences("galaxy_plain", Context.MODE_PRIVATE)
+                    .also { it.edit().putBoolean(UNENCRYPTED_MARKER, true).apply() }
+            }
         }
 
     private fun buildEncryptedPrefs(context: Context): SharedPreferences {

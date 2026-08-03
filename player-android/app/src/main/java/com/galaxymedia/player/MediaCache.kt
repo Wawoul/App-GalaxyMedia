@@ -1,6 +1,7 @@
 package com.galaxymedia.player
 
 import android.content.Context
+import android.os.SystemClock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -21,6 +22,23 @@ class MediaCache(context: Context, private val http: OkHttpClient) {
     // both truncate-write the same "$mediaId.tmp" file, and an older call's
     // prune() could delete what a newer, still-running call just verified.
     private val syncMutex = Mutex()
+
+    /** Per-item download failure state, for exponential backoff. */
+    private class Failure(var count: Int, var retryAt: Long)
+    private val failures = mutableMapOf<String, Failure>()
+
+    private fun noteFailure(mediaId: String) {
+        val failure = failures.getOrPut(mediaId) { Failure(0, 0L) }
+        failure.count += 1
+        // 1min, 2, 4 ... capped at an hour. Long enough that a broken item costs
+        // almost nothing, short enough that a transient outage recovers quickly.
+        val backoff = (60_000L shl (failure.count - 1).coerceAtMost(6)).coerceAtMost(3_600_000L)
+        failure.retryAt = SystemClock.elapsedRealtime() + backoff
+    }
+
+    /** OkHttp's body is platform-nullable; fail with a message instead of an NPE. */
+    private fun okhttp3.Response.bodyOrThrow() =
+        body ?: error("empty response body (HTTP $code)")
 
     fun fileFor(item: ManifestItem): File = File(dir, "${item.mediaId}.bin")
 
@@ -48,13 +66,27 @@ class MediaCache(context: Context, private val http: OkHttpClient) {
 
         for (item in missing) {
             val mediaId = item.mediaId!!
+            // Back off items that keep failing. Without this a permanently broken
+            // item - deleted server-side, stale signed URL, corrupt file - is
+            // re-downloaded in full on every 60s sync, burning bandwidth forever
+            // and holding syncMutex so remote commands queue behind it.
+            val failure = failures[mediaId]
+            if (failure != null && SystemClock.elapsedRealtime() < failure.retryAt) continue
+
             val target = File(dir, "$mediaId.bin")
             val tmp = File(dir, "$mediaId.tmp")
+            // Don't start a download that obviously cannot fit; ENOSPC mid-write
+            // would just churn. Headroom for the item plus a small margin.
+            val needed = (item.sizeBytes ?: 0L) + 32L * 1024 * 1024
+            if (dir.usableSpace in 1 until needed) {
+                noteFailure(mediaId)
+                continue
+            }
             runCatching {
                 http.newCall(Request.Builder().url(item.url!!).build()).execute().use { response ->
                     check(response.isSuccessful) { "download ${response.code}" }
                     tmp.outputStream().use { out ->
-                        val input = response.body!!.byteStream()
+                        val input = response.bodyOrThrow().byteStream()
                         val buffer = ByteArray(64 * 1024)
                         while (true) {
                             val read = input.read(buffer)
@@ -66,11 +98,26 @@ class MediaCache(context: Context, private val http: OkHttpClient) {
                     }
                 }
                 val expected = item.sha256
-                if (expected != null && sha256(tmp) != expected) {
-                    error("checksum mismatch for $mediaId") // tampered or truncated - reject
+                if (expected != null) {
+                    if (sha256(tmp) != expected) {
+                        error("checksum mismatch for $mediaId") // tampered or truncated - reject
+                    }
+                } else {
+                    // No server-side hash to check against, so fall back to the
+                    // declared size: a connection dropped mid-body otherwise
+                    // renames a truncated file into place and the zone plays a
+                    // corrupt item forever with nothing to trigger a re-fetch.
+                    val declared = item.sizeBytes
+                    if (declared != null && declared > 0 && tmp.length() != declared) {
+                        error("size mismatch for $mediaId (${tmp.length()} != $declared)")
+                    }
                 }
                 check(tmp.renameTo(target)) { "rename failed" }
-            }.onFailure { tmp.delete() }
+                failures.remove(mediaId)
+            }.onFailure {
+                tmp.delete()
+                noteFailure(mediaId)
+            }
         }
         if (missing.isNotEmpty()) onProgress?.invoke(100)
         prune(items.mapNotNull { it.mediaId }.toSet())

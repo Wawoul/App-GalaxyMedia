@@ -1,7 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
+import { unlink } from 'node:fs/promises';
+import path from 'node:path';
 import { z } from 'zod';
-import { SIGNED_URL_TTL_S } from '../config.js';
+import { config, SIGNED_URL_TTL_S } from '../config.js';
 import { query, withTransaction } from '../db/pool.js';
 import { audit } from '../lib/audit.js';
 import { signDownload, verifyDownload } from '../lib/crypto.js';
@@ -103,16 +105,43 @@ export function screenRoutes(app: FastifyInstance): void {
        LEFT JOIN screen_group_members m ON m.screen_id = s.id
        LEFT JOIN media med ON med.company_id = s.company_id AND med.id::text = s.current_item
        LEFT JOIN LATERAL (
-         -- Effective assignment, same rule the TV uses: direct beats group, newest wins.
+         -- Effective assignment. This must match lib/schedule.ts's resolveActive,
+         -- which the players use: highest priority first, then direct-over-group,
+         -- then newest. It previously ordered on direct/newest only and ignored
+         -- priority AND every schedule filter, so the dashboard happily showed an
+         -- expired or lower-priority assignment as "now playing" while the TV
+         -- played something else entirely.
+         -- Evaluated in the screen's own timezone, again like the players.
          SELECT coalesce(p.name, l.name, 'Black Screen') AS name
          FROM assignments a
          LEFT JOIN playlists p ON p.id = a.playlist_id
          LEFT JOIN layouts l ON l.id = a.layout_id
+         CROSS JOIN LATERAL (
+           SELECT (now() AT TIME ZONE coalesce(s.timezone, 'Europe/London')) AS local_now
+         ) tz
          WHERE a.company_id = s.company_id AND (
            a.screen_id = s.id
            OR a.group_id IN (SELECT group_id FROM screen_group_members gm WHERE gm.screen_id = s.id)
          )
-         ORDER BY (a.screen_id IS NOT NULL) DESC, a.created_at DESC
+         -- Date range (inclusive), if set.
+         AND (a.start_date IS NULL OR tz.local_now::date >= a.start_date)
+         AND (a.end_date IS NULL OR tz.local_now::date <= a.end_date)
+         -- Day-of-week, if set. Postgres dow: 0=Sun..6=Sat, matching days_of_week.
+         AND (
+           a.days_of_week IS NULL
+           OR extract(dow FROM tz.local_now)::int = ANY(a.days_of_week)
+         )
+         -- Time window, if set; end <= start means it runs past midnight.
+         AND (
+           a.start_time IS NULL OR a.end_time IS NULL
+           OR (
+             CASE WHEN a.end_time > a.start_time
+               THEN tz.local_now::time >= a.start_time AND tz.local_now::time < a.end_time
+               ELSE tz.local_now::time >= a.start_time OR tz.local_now::time < a.end_time
+             END
+           )
+         )
+         ORDER BY a.priority DESC, (a.screen_id IS NOT NULL) DESC, a.created_at DESC
          LIMIT 1
        ) pl ON true
        WHERE ($1::uuid[] IS NULL OR s.company_id = ANY($1))
@@ -261,8 +290,22 @@ export function screenRoutes(app: FastifyInstance): void {
     await withTransaction(async (tx) => {
       await tx.query('DELETE FROM screen_group_members WHERE screen_id = $1', [id]);
       await tx.query('DELETE FROM assignments WHERE screen_id = $1', [id]);
-      await tx.query('UPDATE screens SET company_id = $2 WHERE id = $1', [id, body.companyId]);
+      // proof_of_play carries its own company_id, so history left behind would
+      // keep showing in the OLD company's reports - and because those reports
+      // join screens for the name, they'd render the new tenant's screen name
+      // too. Delete it: the play history belongs to the company whose content
+      // was playing, and that company no longer owns this screen.
+      await tx.query('DELETE FROM proof_of_play WHERE screen_id = $1', [id]);
+      // Clear the screenshot pointer as well; the image on disk is of the
+      // previous company's content and the new owner can fetch it immediately.
+      await tx.query(
+        'UPDATE screens SET company_id = $2, screenshot_at = NULL, current_item = NULL WHERE id = $1',
+        [id, body.companyId],
+      );
     });
+    // Best-effort: the DB no longer references it, so a failure here only leaves
+    // an orphaned file, never an accessible one.
+    await unlink(path.join(config.MEDIA_DIR, 'screenshots', `${id}.jpg`)).catch(() => {});
     notifyScreen(id, { type: 'sync' });
     audit({
       userId: req.principal!.id,

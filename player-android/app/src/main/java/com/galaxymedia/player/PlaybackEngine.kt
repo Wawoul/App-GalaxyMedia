@@ -29,6 +29,9 @@ import kotlin.coroutines.resume
 
 private const val DEFAULT_IMAGE_MS = 10_000L
 private const val DEFAULT_URL_MS = 30_000L
+// Floor between attempts when an item fails to play, so an undecodable file
+// can't spin the playlist loop at full CPU.
+private const val ERROR_RETRY_MS = 5_000L
 
 /**
  * One rectangular region playing its own playlist loop (images, videos, URLs).
@@ -92,11 +95,20 @@ private class ZonePlayer(
             var index = 0
             while (true) {
                 val item = items[index % items.size]
-                onItemChanged?.invoke(item.name ?: item.url ?: item.mediaId)
+                val label = item.name ?: item.url ?: item.mediaId
                 when (item.type) {
-                    "image" -> showImage(item)
-                    "video" -> playVideo(item)
-                    "url" -> showUrl(item)
+                    // Report only what actually played: onItemChanged feeds the
+                    // proof-of-play buffer, and announcing before playback meant
+                    // a corrupt video still billed as a full play.
+                    "video" -> if (playVideo(item)) onItemChanged?.invoke(label)
+                    "image" -> {
+                        onItemChanged?.invoke(label)
+                        showImage(item)
+                    }
+                    "url" -> {
+                        onItemChanged?.invoke(label)
+                        showUrl(item)
+                    }
                     else -> delay(1_000)
                 }
                 index++
@@ -191,7 +203,8 @@ private class ZonePlayer(
         exoPlayer.stop()
     }
 
-    private suspend fun playVideo(item: ManifestItem) {
+    /** @return true if the item played, false if ExoPlayer rejected it. */
+    private suspend fun playVideo(item: ManifestItem): Boolean {
         playerView.visibility = View.VISIBLE
         imageView.visibility = View.GONE
         webView.visibility = View.GONE
@@ -200,23 +213,34 @@ private class ZonePlayer(
         exoPlayer.prepare()
         exoPlayer.play()
         val fixed = item.durationMs
-        if (fixed != null) delay(fixed) else awaitPlaybackEnd()
+        val ok = if (fixed != null) {
+            delay(fixed)
+            true
+        } else {
+            awaitPlaybackEnd()
+        }
         exoPlayer.stop()
+        // A file ExoPlayer can't decode fails instantly. Without this floor, a
+        // zone whose only item is corrupt re-enters the loop immediately and
+        // pegs a CPU core while emitting hundreds of play records a second.
+        if (!ok) delay(ERROR_RETRY_MS)
+        return ok
     }
 
-    private suspend fun awaitPlaybackEnd() = suspendCancellableCoroutine { continuation ->
+    /** @return true if playback reached the end, false if it errored out. */
+    private suspend fun awaitPlaybackEnd(): Boolean = suspendCancellableCoroutine { continuation ->
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 if (state == Player.STATE_ENDED) {
                     exoPlayer.removeListener(this)
-                    if (continuation.isActive) continuation.resume(Unit)
+                    if (continuation.isActive) continuation.resume(true)
                 }
             }
 
             override fun onPlayerErrorChanged(error: androidx.media3.common.PlaybackException?) {
                 if (error != null) {
                     exoPlayer.removeListener(this)
-                    if (continuation.isActive) continuation.resume(Unit) // skip broken file
+                    if (continuation.isActive) continuation.resume(false) // skip broken file
                 }
             }
         }

@@ -279,15 +279,24 @@ export function transferRoutes(app: FastifyInstance): void {
         ),
       );
       for (const p of doc.playlists) {
+        // Numbered suffix rather than repeated concatenation: appending
+        // " (imported)" each round produced "Menu (imported) (imported)" and
+        // eventually a name too long for a later export to validate, which
+        // quietly made the company un-exportable.
         let name = p.name;
-        while (existingNames.has(name)) name = `${name} (imported)`;
+        for (let n = 2; existingNames.has(name); n++) {
+          name = `${p.name} (imported ${n})`.slice(0, 200);
+        }
         existingNames.add(name);
         const { rows } = await tx.query<{ id: string }>(
           'INSERT INTO playlists (company_id, name) VALUES ($1, $2) RETURNING id',
           [companyId, name],
         );
         const playlistId = rows[0]!.id;
-        playlistIds.set(p.name, playlistId);
+        // Keyed by original name so layouts/assignments can resolve their
+        // references. Two playlists sharing a name in one export would collapse
+        // here - keep the first so those references stay deterministic.
+        if (!playlistIds.has(p.name)) playlistIds.set(p.name, playlistId);
         summary.playlists++;
         let position = 0;
         for (const item of p.items) {

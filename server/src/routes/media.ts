@@ -179,9 +179,15 @@ export function mediaRoutes(app: FastifyInstance): void {
       }
 
       const parent = rows[0].parent_id;
-      await query('UPDATE media SET folder_id = $2 WHERE folder_id = $1', [id, parent]);
-      await query('UPDATE media_folders SET parent_id = $2 WHERE parent_id = $1', [id, parent]);
-      await query('DELETE FROM media_folders WHERE id = $1', [id]);
+      // One transaction: media_folders.parent_id cascades on delete, so if the
+      // reparenting above had failed while the DELETE below succeeded, the
+      // cascade would silently destroy the whole subtree this endpoint promises
+      // to move up a level.
+      await withTransaction(async (tx) => {
+        await tx.query('UPDATE media SET folder_id = $2 WHERE folder_id = $1', [id, parent]);
+        await tx.query('UPDATE media_folders SET parent_id = $2 WHERE parent_id = $1', [id, parent]);
+        await tx.query('DELETE FROM media_folders WHERE id = $1', [id]);
+      });
       audit({ userId: req.principal!.id, companyId, action: 'folder.delete', entityId: id, ip: req.ip });
       return reply.send({ ok: true });
     });
@@ -243,12 +249,21 @@ export function mediaRoutes(app: FastifyInstance): void {
         dot > 0
           ? `${source.original_name.slice(0, dot)} (copy)${source.original_name.slice(dot)}`
           : `${source.original_name} (copy)`;
-      const { rows: created } = await query(
-        `INSERT INTO media (id, company_id, kind, original_name, mime, size_bytes, sha256, folder_id, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         RETURNING id, kind, original_name, mime, size_bytes, folder_id, created_at`,
-        [newId, source.company_id, source.kind, copyName, source.mime, source.size_bytes, source.sha256, source.folder_id, req.principal!.id],
-      );
+      // The upload path already cleans up its file when the insert fails; this
+      // one didn't, so every failed duplicate leaked a full-size orphan with no
+      // row pointing at it and nothing to ever collect it.
+      let created;
+      try {
+        ({ rows: created } = await query(
+          `INSERT INTO media (id, company_id, kind, original_name, mime, size_bytes, sha256, folder_id, created_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           RETURNING id, kind, original_name, mime, size_bytes, folder_id, created_at`,
+          [newId, source.company_id, source.kind, copyName, source.mime, source.size_bytes, source.sha256, source.folder_id, req.principal!.id],
+        ));
+      } catch (err) {
+        await unlink(mediaPath(source.company_id, newId, ext)).catch(() => {});
+        throw err;
+      }
       audit({ userId: req.principal!.id, companyId: source.company_id, action: 'media.duplicate', entityId: newId, ip: req.ip });
       return reply.code(201).send(created[0]);
     });
