@@ -147,7 +147,17 @@ else
 fi
 ln -sf /etc/nginx/sites-available/galaxy-media /etc/nginx/sites-enabled/galaxy-media
 rm -f /etc/nginx/sites-enabled/default
-nginx -t && systemctl reload nginx || true
+# Deliberately not `|| true`: swallowing a config error here meant the installer
+# printed a cheerful success summary while nginx carried on serving the default
+# site, which is exactly the "it says it worked but the page is wrong" report.
+if nginx -t; then
+  systemctl reload nginx
+else
+  echo "ERROR: nginx rejected the generated config (shown above); it was NOT reloaded." >&2
+  echo "The app itself is installed - fix /etc/nginx/sites-available/galaxy-media," >&2
+  echo "then run: nginx -t && systemctl reload nginx" >&2
+  exit 1
+fi
 
 echo "==> Firewall + fail2ban + auto security updates"
 ufw allow 22/tcp

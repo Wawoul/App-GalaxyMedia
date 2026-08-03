@@ -265,8 +265,13 @@ export function Layouts({ company, canEdit }: { company: Company; canEdit: boole
                     <button className="danger"
                       onClick={async () => {
                         if (confirm(`Delete layout "${l.name}"? Schedule slots using it are removed too.`)) {
-                          await api(`/api/layouts/${l.id}`, { method: 'DELETE' });
-                          await load();
+                          try {
+                            setError('');
+                            await api(`/api/layouts/${l.id}`, { method: 'DELETE' });
+                            await load();
+                          } catch (err) {
+                            setError(err instanceof Error ? err.message : 'could not delete that layout');
+                          }
                         }
                       }}>
                       Delete

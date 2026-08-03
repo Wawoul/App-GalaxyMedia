@@ -110,7 +110,11 @@ export function Schedule({ company, canEdit }: { company: Company; canEdit: bool
     void load().catch((err) => setError(err instanceof Error ? err.message : 'failed'));
   }, [load]);
 
-  const [targetType, targetId] = target ? (target.split(':') as [string, string]) : ['', ''];
+  // splitAt(1) rather than split(':'): a uuid never contains a colon today, but
+  // the cast hid that assumption from the type checker entirely.
+  const sep = target.indexOf(':');
+  const targetType = sep === -1 ? '' : target.slice(0, sep);
+  const targetId = sep === -1 ? '' : target.slice(sep + 1);
   // The screen/group clock the server and players actually resolve against.
   const targetTimezone =
     targetType === 'g'
@@ -141,8 +145,15 @@ export function Schedule({ company, canEdit }: { company: Company; canEdit: bool
 
   const removeAssignment = async (a: Assignment) => {
     if (confirm(`Remove "${a.playlist_name}" from this schedule?`)) {
-      await api(`/api/assignments/${a.id}`, { method: 'DELETE' });
-      await load();
+      // Unhandled, a failed delete left the slot on screen with no error, so it
+      // looked like the click simply didn't register.
+      try {
+        setError('');
+        await api(`/api/assignments/${a.id}`, { method: 'DELETE' });
+        await load();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'could not remove that slot');
+      }
     }
   };
 
@@ -397,9 +408,16 @@ export function Schedule({ company, canEdit }: { company: Company; canEdit: bool
                   onChange={(e) => setDraft({ ...draft, startMin: toMin(e.target.value) })} />
               </label>
               <label className="form-field">
-                <span>To</span>
+                <span>To{draft.endMin > 24 * 60 ? ' (next day)' : ''}</span>
                 <input type="time" value={toTime(draft.endMin % (24 * 60))}
-                  onChange={(e) => setDraft({ ...draft, endMin: toMin(e.target.value) || 24 * 60 })} />
+                  onChange={(e) => {
+                    // 00:00 means "midnight at the end of this window", i.e. 1440,
+                    // not zero - relying on `|| 24*60` did the same thing by
+                    // accident via falsiness, which read as a bug and hid the
+                    // fact that the field can't express a genuine 0.
+                    const min = toMin(e.target.value);
+                    setDraft({ ...draft, endMin: min === 0 ? 24 * 60 : min });
+                  }} />
               </label>
 
               <label className="form-field">
@@ -474,9 +492,16 @@ export function Schedule({ company, canEdit }: { company: Company; canEdit: bool
                 <button className="danger" style={{ marginRight: 'auto' }}
                   onClick={async () => {
                     if (confirm('Remove this slot from the schedule?')) {
-                      await api(`/api/assignments/${draft.id}`, { method: 'DELETE' });
-                      setDraft(null);
-                      await load();
+                      try {
+                        setError('');
+                        await api(`/api/assignments/${draft.id}`, { method: 'DELETE' });
+                        setDraft(null);
+                        await load();
+                      } catch (err) {
+                        // Keep the modal open so the error is visible next to
+                        // the thing that failed.
+                        setError(err instanceof Error ? err.message : 'could not delete that slot');
+                      }
                     }
                   }}>
                   Delete slot

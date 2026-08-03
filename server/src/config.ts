@@ -6,7 +6,17 @@ const schema = z.object({
   HOST: z.string().default('127.0.0.1'),
   PORT: z.coerce.number().int().positive().default(8080),
   BASE_URL: z.string().url(),
-  JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 chars'),
+  // Length alone would accept "CHANGE_ME" padded out, or 32 of the same
+  // character. This signs every session and device token, so reject the
+  // obviously-not-random cases rather than booting into a forgeable state.
+  JWT_SECRET: z
+    .string()
+    .min(32, 'JWT_SECRET must be at least 32 chars')
+    .refine((s) => new Set(s).size >= 8, 'JWT_SECRET looks like filler - use `openssl rand -hex 48`')
+    .refine(
+      (s) => !/change[_ -]?me|placeholder|secret{2,}|^password/i.test(s),
+      'JWT_SECRET is a placeholder value - use `openssl rand -hex 48`',
+    ),
   ENCRYPTION_KEY: z
     .string()
     .regex(/^[0-9a-fA-F]{64}$/, 'ENCRYPTION_KEY must be 32 bytes hex (64 hex chars)'),

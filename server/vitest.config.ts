@@ -8,7 +8,9 @@ export default defineConfig({
       NODE_ENV: 'test',
       DATABASE_URL: 'postgres://test:test@localhost:5432/test',
       BASE_URL: 'https://test.example.com',
-      JWT_SECRET: 'test-secret-test-secret-test-secret-test',
+      // Random-looking on purpose: config.ts rejects low-entropy secrets, and a
+      // test fixture that couldn't pass real validation would be a poor fixture.
+      JWT_SECRET: '9f3b7c21ae845d06f2e19b4c7a83d5e0621fb94c7d3ea85102bc6f47',
       ENCRYPTION_KEY: 'a'.repeat(64),
       MEDIA_DIR: '/tmp/galaxy-test-media',
     },

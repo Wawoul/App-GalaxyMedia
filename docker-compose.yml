@@ -40,7 +40,18 @@ services:
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-512}
     volumes:
       - media-data:/data
+    healthcheck:
+      # The API already exposes this; without a healthcheck a wedged app looks
+      # "up" to Docker and to anything watching the stack.
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:8080/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
+# Named volumes, so `docker compose down` and `up -d --build` keep your data.
+# WARNING: `docker compose down -v` deletes both of these - the entire media
+# library and the database - with no prompt. Take a backup first (see README).
 volumes:
   db-data:
   media-data:

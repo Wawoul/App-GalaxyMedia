@@ -22,6 +22,15 @@ fail() {
   exit 1
 }
 
+# Fail early and loudly rather than half-writing a backup onto a full disk. The
+# media rsync hardlinks unchanged files against the previous run, so this only
+# needs headroom for the dump plus whatever media actually changed - 2GB is a
+# generous floor for that.
+AVAIL_KB="$(df -Pk "$BACKUP_DIR" | awk 'NR==2 {print $4}')"
+if [[ -n "$AVAIL_KB" && "$AVAIL_KB" -lt 2097152 ]]; then
+  fail "only $((AVAIL_KB / 1024))MB free on $BACKUP_DIR - refusing to start"
+fi
+
 # 1. Database (custom format: restore with pg_restore - see restore.sh)
 # Write to .part first: `>` truncates the target before pg_dump runs, so a
 # disk-full or permission failure would otherwise leave a zero-byte file sitting
@@ -38,6 +47,16 @@ cp /etc/galaxy-media/config.env "$DEST/config.env" || fail "could not copy confi
 chmod 600 "$DEST/config.env"
 
 # 3. Media files (hardlink against the previous backup to save space)
+#
+# Deliberately AFTER the dump, and the order matters. The API stays live during a
+# backup, so the two are seconds apart and cannot be perfectly consistent:
+#   - media uploaded in between  -> an extra file the dump doesn't reference (harmless)
+#   - media deleted in between   -> the dump references a file the rsync still
+#                                   copied, so a restore has it (also harmless)
+# The reverse order would produce the genuinely bad case: a dump referencing a
+# file that was never captured. Overnight (03:30, when nobody is editing) this
+# window is effectively nil; for a guaranteed-consistent copy, stop galaxy-api
+# first.
 PREV="$(ls -1d "$BACKUP_DIR"/*/ 2>/dev/null | sort | tail -2 | head -1 || true)"
 if [[ -n "$PREV" && -d "$PREV/media" && "$PREV" != "$DEST/" ]]; then
   rsync -a --link-dest="$PREV/media" /var/lib/galaxy-media/media/ "$DEST/media/" \

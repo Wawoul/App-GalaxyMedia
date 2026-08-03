@@ -142,7 +142,22 @@ Set `BASE_URL` in `.env` to that public https URL (TVs embed it in download link
 `docker compose up -d` again. Updates: `git pull && docker compose up -d --build`.
 
 Backups in Docker: dump the DB and copy the media volume, e.g.
-`docker compose exec db pg_dump -U galaxy galaxy_media > backup.sql` on a cron.
+
+```bash
+docker compose exec -T db pg_dump -U galaxy galaxy_media > backup.sql   # database
+docker run --rm -v galaxy_media-data:/data -v "$PWD:/out" alpine \
+  tar czf /out/media.tar.gz -C /data .                                  # media library
+```
+
+Restore the database with `docker compose exec -T db psql -U galaxy galaxy_media < backup.sql`
+(plain SQL here, unlike the LXC installer's custom-format dumps - see
+[deploy/restore.sh](deploy/restore.sh) for those). Keep your `.env` with the backup:
+`ENCRYPTION_KEY` decrypts 2FA secrets and stored SMTP/Telegram credentials, and a
+database restored beside a different key leaves all of them unreadable.
+
+> ⚠️ Your media and database live in named Docker volumes. `docker compose down` and
+> `docker compose up -d --build` both preserve them, but **`docker compose down -v`
+> deletes both permanently, with no prompt.** Back up before running it.
 
 ### Option B - install script (Proxmox LXC / Ubuntu VM)
 
