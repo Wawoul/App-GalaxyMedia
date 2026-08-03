@@ -228,6 +228,12 @@ cd admin && npm install && npm run dev
 # Tests / typecheck
 cd server && npm test && npm run typecheck
 cd admin && npm run typecheck
+
+# The route tests (cross-tenant isolation, auth) need a throwaway Postgres -
+# they migrate it and delete its rows. Without TEST_DATABASE_URL they skip,
+# so `npm test` stays green on a machine with no database.
+createdb galaxy_itest
+cd server && TEST_DATABASE_URL=postgres://user:pass@localhost:5432/galaxy_itest npm test
 ```
 
 ## Contributing / security

@@ -302,12 +302,15 @@ The repo may be published on GitHub, so from the first commit:
   a client company group in under a minute.
 - Uploading media and reordering a playlist updates the TV within ~10 seconds without touching the TV.
 - Pulling the TV's network cable mid-playback: content keeps looping; on reconnect it resyncs silently.
-- Two companies' admins can never see each other's screens or media (verified by tests).
+- Two companies' admins can never see each other's screens or media (verified by tests:
+  `server/src/routes/isolation.test.ts` drives the real routes - list, read, modify, delete,
+  and mass-assignment of a foreign `companyId` - against a live database).
 - An `msp_editor` sees exactly the companies on their access list - nothing else appears in any
   list, search, or API response; removing a company from their list locks them out immediately
-  (verified by tests).
+  (role logic unit-tested in `permissions.test.ts`; not yet covered end-to-end at the route level).
 - Rebooting the TV returns it to playback with no remote-control interaction.
 - Rebooting the TV **while the network is down** still returns it to full playback from cache,
   with dayparting switching content at the right local times.
 - An unauthenticated scan of the server exposes only 443; a captured device token can fetch only
-  that screen's own content (verified by tests).
+  that screen's own content (verified by tests: every admin route 401s without a token, a device
+  token is rejected on human-only routes, and unsigned/forged media URLs are refused).

@@ -1,4 +1,4 @@
-import Fastify from 'fastify';
+import Fastify, { type FastifyInstance } from 'fastify';
 import cookie from '@fastify/cookie';
 import multipart from '@fastify/multipart';
 import rateLimit from '@fastify/rate-limit';
@@ -23,12 +23,17 @@ import { systemRoutes } from './routes/system.js';
 import { transferRoutes } from './routes/transfer.js';
 import { userRoutes } from './routes/users.js';
 
-async function main(): Promise<void> {
-  await mkdir(config.MEDIA_DIR, { recursive: true });
-  await migrate();
-
+/**
+ * Builds the fully-wired app without migrating, binding a port, or starting the
+ * alert loop, so integration tests can drive real routes via app.inject().
+ * main() below is the production entrypoint and owns those side effects.
+ */
+export async function buildServer(): Promise<FastifyInstance> {
   const app = Fastify({
-    logger: { level: config.NODE_ENV === 'production' ? 'info' : 'debug' },
+    // Silent under test: request logs would bury the assertion output.
+    logger: config.NODE_ENV === 'test'
+      ? false
+      : { level: config.NODE_ENV === 'production' ? 'info' : 'debug' },
     // Trust exactly one hop (nginx on localhost). `true` would trust the whole
     // XFF chain and take the client-supplied leftmost entry as req.ip, which
     // nginx's `$proxy_add_x_forwarded_for` (append, not replace) lets a client
@@ -94,12 +99,23 @@ async function main(): Promise<void> {
   deviceRoutes(app);
   screenshotRoute(app); // token-in-query auth; must stay outside screenRoutes' requireUser scope
 
+  return app;
+}
+
+async function main(): Promise<void> {
+  await mkdir(config.MEDIA_DIR, { recursive: true });
+  await migrate();
+  const app = await buildServer();
   startAlertLoop(app.log);
   await app.listen({ host: config.HOST, port: config.PORT });
 }
 
-main().catch((err) => {
-  // eslint-disable-next-line no-console
-  console.error(err);
-  process.exit(1);
-});
+// Guarded so importing buildServer() from a test doesn't migrate, bind a port,
+// or start the alert loop as a side effect.
+if (process.env.NODE_ENV !== 'test') {
+  main().catch((err) => {
+    // eslint-disable-next-line no-console
+    console.error(err);
+    process.exit(1);
+  });
+}
