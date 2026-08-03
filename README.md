@@ -12,8 +12,14 @@ Self-hosted digital signage for MSPs. No per-screen licensing, No "Freemium" - y
   staff who only manage some companies.
 - **Content**: media library with folders - images (JPG, PNG, GIF, WebP, BMP) and
   videos (MP4, MOV, WebM, MKV), validated by content sniffing, not file extension -
-  playlists (with per-item mute, live web pages), split-screen layouts (presets or
-  custom zones) with scrolling tickers, and white-label branding per company.
+  playlists (with per-item mute, live web pages, and live HLS/DASH streams),
+  split-screen layouts (presets or custom zones) with scrolling tickers, and
+  white-label branding per company.
+  Playlist durations are in **seconds**. For a live stream (`.m3u8`/`.mpd`) the
+  duration is a *restart interval* rather than a stop time - the player restarts
+  the feed then, which recovers a stalled stream - so a stream on its own in a
+  playlist plays continuously. Leave it blank for the 1-hour default; a few
+  seconds there just makes the stream re-buffer constantly.
 - **Scheduling**: drag-on-calendar weekly scheduler with dayparting, overnight windows
   that correctly carry their day-of-week/date restrictions past midnight, bi-weekly/
   one-off recurrence, priorities, and a "Black Screen" mode that simulates the TV being
