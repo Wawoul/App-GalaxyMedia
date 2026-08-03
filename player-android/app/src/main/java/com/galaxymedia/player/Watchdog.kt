@@ -10,7 +10,11 @@ import android.os.Build
 import android.os.SystemClock
 
 private const val CHECK_INTERVAL_MS = 5 * 60_000L // how often the alarm fires
-private const val STALE_THRESHOLD_MS = 4 * 60_000L // no "still alive" mark in this long => relaunch
+// Generous against the 60s mark interval. The alarm uses ...AndAllowWhileIdle and
+// so pierces Doze, but the Activity's coroutine delay() does not - a dozing TV can
+// throttle the mark while the check still fires on time. Too tight a threshold
+// here means relaunching screens that were never broken.
+private const val STALE_THRESHOLD_MS = 15 * 60_000L
 
 /**
  * Dead-man's-switch for unattended TVs: MainActivity marks itself alive on a

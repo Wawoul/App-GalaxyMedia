@@ -91,6 +91,11 @@ export function authRoutes(app: FastifyInstance): void {
       const body = z.object({ pendingToken: z.string() }).parse(req.body);
       const claims = verifyToken(body.pendingToken);
       if (!claims || claims.typ !== '2fa') return reply.code(401).send({ error: 'unauthenticated' });
+      // Only tokens minted for enrollment may enroll. A pending token from the
+      // "already enrolled, awaiting code" path must not reach here: the UPDATE
+      // below no-ops for such a user, but the response would still hand out a
+      // fresh TOTP secret and leak the account's email to a password-only caller.
+      if (!claims.enroll) return reply.code(403).send({ error: 'forbidden' });
 
       const secret = authenticator.generateSecret();
       await query('UPDATE users SET totp_secret_enc = $2 WHERE id = $1 AND totp_enabled = false', [

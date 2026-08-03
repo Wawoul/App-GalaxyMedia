@@ -209,6 +209,12 @@ private class ZonePlayer(
     fun release() {
         loop?.cancel()
         exoPlayer.release()
+        // A detached WebView keeps its renderer, JS timers and network activity
+        // running. Layout re-syncs build new ZonePlayers, so without this the
+        // dead ones accumulate until a 1 GB TV box OOMs after days of uptime.
+        webView.loadUrl("about:blank")
+        (webView.parent as? android.view.ViewGroup)?.removeView(webView)
+        webView.destroy()
     }
 }
 

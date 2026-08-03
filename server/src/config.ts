@@ -41,4 +41,9 @@ export const ACCESS_TOKEN_TTL_S = 15 * 60;
 export const REFRESH_TOKEN_TTL_S = 30 * 24 * 3600;
 export const PAIRING_CODE_TTL_S = 15 * 60;
 export const PENDING_2FA_TTL_S = 5 * 60;
-export const SIGNED_URL_TTL_S = 6 * 3600;
+// Download URLs are HMAC-bound to one media id, but the file route can't check
+// revocation (an <img>/player fetch carries no session), so this window is also
+// how long an unpaired or moved screen keeps access to files it was already
+// given. Kept well above a slow download of a large video, but far below the
+// old 6h: players refresh the manifest every 60s, so they re-sign constantly.
+export const SIGNED_URL_TTL_S = 45 * 60;

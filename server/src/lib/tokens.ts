@@ -38,7 +38,8 @@ export function signDeviceToken(screenId: string, jti: string): string {
 
 export function verifyToken(token: string): Claims | null {
   try {
-    return jwt.verify(token, config.JWT_SECRET) as Claims;
+    // Explicit allowlist: never let the token's own header choose the algorithm.
+    return jwt.verify(token, config.JWT_SECRET, { algorithms: ['HS256'] }) as Claims;
   } catch {
     return null;
   }

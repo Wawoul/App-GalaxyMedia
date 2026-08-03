@@ -9,7 +9,12 @@
     <!-- Keeps the player process alive on memory-tight TV boxes, which otherwise
          evict it after days of uptime and drop the screen to the launcher. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- specialUse, not mediaPlayback: this service exists to hold process priority
+         and the overlay window, not to play media (the Activity does that). Both
+         types have no runtime prerequisites and no timeout, but Android 15 blocks
+         mediaPlayback services from being started by a BOOT_COMPLETED receiver,
+         which is exactly the path a TV takes after a power cut. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Exact alarms so the watchdog check still fires while the TV is dozing. -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
@@ -72,6 +77,12 @@
         <service
             android:name=".PlayerService"
             android:exported="false"
-            android:foregroundServiceType="mediaPlayback" />
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps an unattended digital signage player at foreground
+                    priority so the OS does not evict it, and holds the overlay window
+                    the crash watchdog needs to relaunch it." />
+        </service>
     </application>
 </manifest>

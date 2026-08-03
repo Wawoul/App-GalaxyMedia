@@ -19,10 +19,19 @@ class BootReceiver : BroadcastReceiver() {
             intent.action == ACTION_QUICKBOOT_POWERON ||
             intent.action == ACTION_HTC_QUICKBOOT_POWERON
         ) {
+            // Re-arm the watchdog first: if the activity start below is refused,
+            // this is what brings the screen back a few minutes later.
+            runCatching { Watchdog.schedule(context) }
+            // specialUse (not mediaPlayback) precisely so this is allowed from a
+            // BOOT_COMPLETED receiver on Android 15.
+            runCatching { PlayerService.start(context) }
             val launch = Intent(context, MainActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
-            context.startActivity(launch)
+            // Background activity starts are restricted on Android 10+; an
+            // uncaught refusal here would crash the receiver and take the
+            // watchdog re-arm above down with it.
+            runCatching { context.startActivity(launch) }
         }
     }
 }

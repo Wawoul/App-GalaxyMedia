@@ -20,6 +20,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONObject
@@ -64,6 +65,7 @@ class MainActivity : AppCompatActivity() {
     private var isPlaying = false
     private var activePlaylistId: String? = null
     private val playsBuffer = ArrayDeque<PlayRecord>() // proof-of-play, flushed with heartbeats
+    private val syncMutex = kotlinx.coroutines.sync.Mutex() // one syncNow at a time
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -401,8 +403,15 @@ class MainActivity : AppCompatActivity() {
                         BuildConfig.VERSION_NAME, currentItem, cache.freeSpaceMb(), plays,
                         telemetry.sample(), lastCrash,
                     )
-                    // Delivered: drop what we sent (new plays may have arrived meanwhile).
-                    synchronized(playsBuffer) { repeat(plays.size) { if (playsBuffer.isNotEmpty()) playsBuffer.removeFirst() } }
+                    // Delivered: drop exactly what we sent, matched by identity rather
+                    // than by count. The buffer can overflow (and shed its oldest
+                    // entries) while the request is in flight, in which case removing
+                    // N from the front would silently discard newer plays that were
+                    // never sent - lost proof-of-play the reports are billed on.
+                    synchronized(playsBuffer) {
+                        val sent = plays.toMutableList()
+                        playsBuffer.retainAll { play -> !sent.remove(play) }
+                    }
                     if (lastCrash != null) CrashReporter.clear(this@MainActivity)
                 } catch (e: RevokedException) {
                     onUnpaired()
@@ -415,7 +424,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private suspend fun syncNow() {
+    /**
+     * Serialised: the periodic sync and the "reload"/"update" remote commands can
+     * all land at once, and MediaCache's own mutex only orders the downloads. Two
+     * overlapping syncs would still race to applySchedule, letting an older
+     * manifest win and leaving the screen on stale content.
+     */
+    private suspend fun syncNow() = syncMutex.withLock { syncNowLocked() }
+
+    private suspend fun syncNowLocked() {
         val manifest = api.fetchManifest()
         var lastReported = -100
         // Cache everything across ALL schedules so upcoming dayparts are ready (SPEC §6).
@@ -580,6 +597,25 @@ class MainActivity : AppCompatActivity() {
         prefs.clearPairing()
         statusView.visibility = View.VISIBLE
         startPairing()
+    }
+
+    /**
+     * The Activity is singleTask, so a watchdog relaunch of an app that is still
+     * running lands here rather than in onCreate. Without re-marking liveness the
+     * mark would stay stale forever and the watchdog would relaunch on every
+     * check - a permanent 5-minute flicker on a screen that was never broken.
+     */
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        Watchdog.markAlive(this)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Any path back to the foreground proves the app is alive, including ones
+        // that skip both onCreate and onNewIntent.
+        Watchdog.markAlive(this)
     }
 
     override fun onDestroy() {

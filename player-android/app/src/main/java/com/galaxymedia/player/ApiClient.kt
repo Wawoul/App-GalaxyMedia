@@ -53,8 +53,13 @@ class ApiClient(private val prefs: Prefs) {
             if (response.code == 401) throw RevokedException()
             check(response.isSuccessful) { "manifest failed: ${response.code}" }
             val body = response.body!!.string()
-            prefs.cachedManifest = body // offline fallback (SPEC §6)
-            json.decodeFromString<Manifest>(body)
+            // Decode BEFORE caching: persisting an undecodable manifest would
+            // overwrite the last good one, and cachedManifest() silently returns
+            // null for it - stranding the screen on the idle message across
+            // reboots until a valid manifest happens to arrive (SPEC §6).
+            val manifest = json.decodeFromString<Manifest>(body)
+            prefs.cachedManifest = body // offline fallback
+            manifest
         }
     }
 
