@@ -86,9 +86,29 @@ echo "==> Config"
 if [[ -f "$CONF_DIR/config.env" ]]; then
   ADMIN_PASS="(unchanged - existing config kept, see $CONF_DIR/config.env)"
 else
+  # No config file, but the database already exists: writing a fresh config here
+  # would mint a new ENCRYPTION_KEY and permanently orphan every encrypted value
+  # already in that database (2FA secrets, SMTP and Telegram credentials), and
+  # DB_PASS is unset on this path so the connection string would be junk too.
+  # Restoring config.env from backup is the only correct move, so stop.
+  if [[ -z "${DB_PASS:-}" ]]; then
+    cat >&2 <<MSG
+ERROR: the 'galaxy' database role already exists but $CONF_DIR/config.env is missing.
+
+Continuing would generate a new ENCRYPTION_KEY, which would permanently destroy
+every encrypted value in the existing database - 2FA secrets and stored SMTP /
+Telegram credentials - and could not be undone.
+
+Restore $CONF_DIR/config.env from a backup and re-run this script. To start over
+from scratch instead, drop the database and role first:
+  sudo -u postgres psql -c 'DROP DATABASE galaxy_media'
+  sudo -u postgres psql -c 'DROP ROLE galaxy'
+MSG
+    exit 1
+  fi
   ADMIN_PASS=$(openssl rand -base64 18)
   cat > "$CONF_DIR/config.env" <<EOF
-DATABASE_URL=postgres://galaxy:${DB_PASS:-CHANGE_ME}@localhost:5432/galaxy_media
+DATABASE_URL=postgres://galaxy:${DB_PASS}@localhost:5432/galaxy_media
 HOST=127.0.0.1
 PORT=8080
 BASE_URL=$BASE_URL

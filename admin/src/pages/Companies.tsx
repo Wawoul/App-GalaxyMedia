@@ -126,11 +126,18 @@ export function Companies({
                     style={{ minWidth: 220 }}
                     onBlur={async (e) => {
                       if (e.target.value.trim() !== c.alert_emails) {
-                        await api(`/api/companies/${c.id}`, {
-                          method: 'PATCH',
-                          body: { alertEmails: e.target.value.trim() },
-                        });
-                        await reload();
+                        // Without the catch a failed save is invisible: the typed
+                        // value stays on screen and the admin assumes it stuck.
+                        try {
+                          setError('');
+                          await api(`/api/companies/${c.id}`, {
+                            method: 'PATCH',
+                            body: { alertEmails: e.target.value.trim() },
+                          });
+                          await reload();
+                        } catch (err) {
+                          setError(err instanceof Error ? err.message : 'could not save alert emails');
+                        }
                       }
                     }} />
                 </td>
@@ -142,11 +149,16 @@ export function Companies({
                     style={{ minWidth: 160 }}
                     onBlur={async (e) => {
                       if (e.target.value.trim() !== c.brand_name) {
-                        await api(`/api/companies/${c.id}`, {
-                          method: 'PATCH',
-                          body: { brandName: e.target.value.trim() },
-                        });
-                        await reload();
+                        try {
+                          setError('');
+                          await api(`/api/companies/${c.id}`, {
+                            method: 'PATCH',
+                            body: { brandName: e.target.value.trim() },
+                          });
+                          await reload();
+                        } catch (err) {
+                          setError(err instanceof Error ? err.message : 'could not save brand name');
+                        }
                       }
                     }} />
                 </td>

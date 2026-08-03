@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import type { Company, Group, Screen } from '../types';
 
@@ -57,6 +57,10 @@ export function Screens({
   canEdit: boolean;
 }) {
   const [screens, setScreens] = useState<Screen[]>([]);
+  // Mirrors `screens` so handlers can read the latest rows without closing over
+  // a snapshot the background refresh has since replaced.
+  const screensRef = useRef<Screen[]>([]);
+  screensRef.current = screens;
   const [groups, setGroups] = useState<Group[]>([]);
   const [error, setError] = useState('');
   // pairing form
@@ -221,9 +225,19 @@ export function Screens({
   };
 
   const toggleGroup = async (screen: Screen, gid: string, on: boolean) => {
-    const next = on ? [...screen.group_ids, gid] : screen.group_ids.filter((x) => x !== gid);
-    await api(`/api/screens/${screen.id}`, { method: 'PATCH', body: { groupIds: next } });
-    await load();
+    // Read the freshest row rather than the one captured when this row rendered:
+    // the 15s refresh replaces `screens` wholesale, so two ticks within that
+    // window would send a stale list and silently undo the first change.
+    const current = screensRef.current.find((s) => s.id === screen.id) ?? screen;
+    const base = current.group_ids;
+    const next = on ? [...new Set([...base, gid])] : base.filter((x) => x !== gid);
+    try {
+      setError('');
+      await api(`/api/screens/${screen.id}`, { method: 'PATCH', body: { groupIds: next } });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'could not update groups');
+    }
   };
 
   const moveScreen = async (screen: Screen) => {

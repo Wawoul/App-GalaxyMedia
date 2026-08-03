@@ -25,7 +25,19 @@ export function Playlists({ company, canEdit }: { company: Company; canEdit: boo
     void load().catch((err) => setError(err instanceof Error ? err.message : 'failed'));
   }, [load]);
 
+  // Same protection for closing the tab or hitting back mid-edit.
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty]);
+
   const openPlaylist = async (id: string) => {
+    if (id === selected) return;
+    // Switching playlists replaced `items` outright, silently throwing away an
+    // in-progress reorder or duration edit with no way to get it back.
+    if (dirty && !confirm('Discard unsaved changes to the current playlist?')) return;
     const data = await api<{ items: PlaylistItem[] }>(`/api/playlists/${id}`);
     setSelected(id);
     setItems(data.items);
@@ -173,7 +185,11 @@ export function Playlists({ company, canEdit }: { company: Company; canEdit: boo
             <thead><tr><th>#</th><th>Item</th><th>Duration</th><th>Enabled</th><th>Muted</th>{canEdit && <th></th>}</tr></thead>
             <tbody>
               {items.map((item, index) => (
-                <tr key={index}>
+                // Keyed by identity, not index: the move buttons below reorder
+                // this list, and an index key makes React reuse the DOM node for
+                // a different item - so a focused duration input keeps its old
+                // value while now belonging to another row.
+                <tr key={item.id ?? `${item.media_id ?? item.url}-${index}`}>
                   <td className="muted">{index + 1}</td>
                   <td>{item.original_name ?? item.url ?? item.media_id}</td>
                   <td>
@@ -182,10 +198,15 @@ export function Playlists({ company, canEdit }: { company: Company; canEdit: boo
                         value={item.duration_ms != null ? item.duration_ms / 1000 : ''}
                         placeholder={item.kind === 'video' ? 'auto' : '10'}
                         onChange={(e) => {
+                          const seconds = Number(e.target.value);
+                          // A negative or non-numeric duration reaches the player
+                          // as a non-positive setTimeout, which fires instantly
+                          // and spins the playlist. Blank stays "auto" (null).
+                          const valid = e.target.value !== '' && Number.isFinite(seconds) && seconds > 0;
                           const next = [...items];
                           next[index] = {
                             ...item,
-                            duration_ms: e.target.value ? Number(e.target.value) * 1000 : null,
+                            duration_ms: valid ? Math.round(seconds * 1000) : null,
                           };
                           setItems(next);
                           setDirty(true);

@@ -90,8 +90,12 @@ async function deviceFetch(path: string, init?: RequestInit): Promise<Response> 
 
 // ── Item renderers ────────────────────────────────────────────────────────────
 
-function StreamVideo({ item }: { item: Item }) {
+function StreamVideo({ item, onFailed }: { item: Item; onFailed?: () => void }) {
   const ref = useRef<HTMLVideoElement>(null);
+  // Held in a ref so the effect below doesn't re-run when the caller passes a
+  // fresh closure on every render.
+  const failed = useRef(onFailed);
+  failed.current = onFailed;
   useEffect(() => {
     const video = ref.current;
     if (!video || !item.url) return;
@@ -100,11 +104,19 @@ function StreamVideo({ item }: { item: Item }) {
       return;
     }
     const hls = new Hls();
+    // Without this a dead stream sits on a black screen for the item's full
+    // duration - an hour, for the stream default - instead of moving on.
+    hls.on(Hls.Events.ERROR, (_event, data) => {
+      if (data.fatal) failed.current?.();
+    });
     hls.loadSource(item.url);
     hls.attachMedia(video);
     return () => hls.destroy();
   }, [item.url]);
-  return <video ref={ref} autoPlay muted={item.muted ?? false} style={fill} />;
+  return (
+    <video ref={ref} autoPlay muted={item.muted ?? false} style={fill}
+      onError={() => failed.current?.()} />
+  );
 }
 
 const fill: React.CSSProperties = { width: '100%', height: '100%', objectFit: 'contain', border: 0 };
@@ -119,35 +131,61 @@ function PlaylistView({
 }) {
   const [index, setIndex] = useState(0);
   const items = playlist.items;
-  const item = items[index % items.length];
+  // items[index % 0] is NaN-indexed and yields undefined; guard so an empty
+  // playlist renders nothing rather than silently indexing garbage.
+  const item = items.length > 0 ? items[index % items.length] : undefined;
 
+  // Reset on the items themselves, not just the id: editing a playlist keeps its
+  // id, so a shortened list would otherwise leave index pointing past the end
+  // and the modulo would play the wrong item.
   useEffect(() => {
     setIndex(0);
-  }, [playlist.id]);
+  }, [playlist.id, items]);
+
+  // Advancing after a failed item goes through here so it can't happen instantly.
+  // With an expired manifest every item errors on mount, and a zero-delay advance
+  // spins the whole playlist as fast as React can render - 100% CPU on a Pi.
+  const advanceAfterError = () => {
+    setTimeout(() => setIndex((i) => i + 1), 5_000);
+  };
 
   useEffect(() => {
     if (!item) return;
     onItem?.(item.name ?? item.url ?? null);
     // Videos without a fixed duration advance on their `ended` event instead.
     if (item.type === 'video' && item.durationMs == null) return;
-    const ms =
+    const configured =
       item.durationMs ??
       (item.type === 'image' ? 10_000 : item.url && isStream(item.url) ? 3_600_000 : 30_000);
+    // A non-positive duration (bad import, hand-edited API call) would make
+    // setTimeout fire immediately and produce the same runaway loop.
+    const ms = Number.isFinite(configured) && configured > 0 ? configured : 10_000;
     const timer = setTimeout(() => setIndex((i) => i + 1), ms);
     return () => clearTimeout(timer);
+    // onItem is a caller-supplied callback that changes identity every render;
+    // including it would restart the timer continuously.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [index, playlist.id]);
+  }, [index, playlist.id, item]);
 
   if (!item?.url) return null;
-  if (item.type === 'image') return <img src={item.url} style={fill} alt="" />;
+  if (item.type === 'image') {
+    return <img src={item.url} style={fill} alt="" onError={advanceAfterError} />;
+  }
   if (item.type === 'video') {
     return (
       <video key={`${item.id}-${index}`} src={item.url} autoPlay muted={item.muted ?? false}
-        style={fill} onEnded={() => setIndex((i) => i + 1)} onError={() => setIndex((i) => i + 1)} />
+        style={fill} onEnded={() => setIndex((i) => i + 1)} onError={advanceAfterError} />
     );
   }
-  if (isStream(item.url)) return <StreamVideo key={`${item.id}-${index}`} item={item} />;
-  return <iframe key={`${item.id}-${index}`} src={item.url} style={fill} title="content" />;
+  if (isStream(item.url)) {
+    return <StreamVideo key={`${item.id}-${index}`} item={item} onFailed={advanceAfterError} />;
+  }
+  // Sandboxed: embedded pages are admin-chosen but still third-party, and
+  // without this one could navigate the whole kiosk away via top.location.
+  return (
+    <iframe key={`${item.id}-${index}`} src={item.url} style={fill} title="content"
+      sandbox="allow-scripts allow-same-origin" />
+  );
 }
 
 function Ticker({ texts }: { texts: string[] }) {
@@ -256,6 +294,11 @@ export function WebPlayer() {
   useEffect(() => {
     if (enabled !== true || phase !== 'playing') return;
     void sync();
+    // Re-sync on a timer, not only on a WS push: the manifest's media URLs are
+    // signed with a 45-minute TTL, so a kiosk left alone overnight would end up
+    // with every link expired and every item 404ing. The Android player already
+    // polls for exactly this reason (POLL_FALLBACK_MS).
+    const resync = setInterval(() => void sync(), 60_000);
     const minute = setInterval(() => setTick((t) => t + 1), 60_000);
     const beat = setInterval(() => {
       // Honor the System-tab toggle: an already-running player stops when disabled.
@@ -275,28 +318,57 @@ export function WebPlayer() {
           plays: batch,
         }),
       }).then((res) => {
-        if (res.status === 401) unpair();
+        if (res.status === 401) return unpair();
+        // fetch only rejects on network errors, so a 500 would otherwise drop the
+        // batch silently - put it back for the next beat like an outage would.
+        if (!res.ok) plays.current.unshift(...batch);
       }).catch(() => plays.current.unshift(...batch)); // offline: keep for next beat
     }, 45_000);
 
     let ws: WebSocket | null = null;
     let closed = false;
+    let failures = 0;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    let identifyTimer: ReturnType<typeof setTimeout> | undefined;
+    const scheduleReconnect = () => {
+      if (closed) return;
+      // Backoff with jitter, capped: a whole site's kiosks coming back after an
+      // outage must not reconnect in lockstep every 15s forever.
+      failures += 1;
+      const base = Math.min(15_000 * 2 ** (failures - 1), 120_000);
+      clearTimeout(retry);
+      retry = setTimeout(connect, base / 2 + Math.random() * (base / 2));
+    };
     const connect = () => {
       const token = localStorage.getItem(TOKEN_KEY);
       if (!token || closed) return;
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-      ws = new WebSocket(`${proto}://${location.host}/api/device/ws?token=${token}`);
-      ws.onmessage = (event) => {
+      let socket: WebSocket;
+      try {
+        socket = new WebSocket(`${proto}://${location.host}/api/device/ws?token=${token}`);
+      } catch {
+        // A throwing constructor (blocked/invalid URL) used to escape the effect
+        // and end reconnection for the life of the page.
+        scheduleReconnect();
+        return;
+      }
+      ws = socket;
+      socket.onopen = () => {
+        failures = 0;
+      };
+      socket.onmessage = (event) => {
         const msg = JSON.parse(String(event.data)) as { type: string; command?: string };
         if (msg.type === 'sync' || msg.command === 'reload' || msg.command === 'clear_cache') void sync();
         else if (msg.type === 'unpair') unpair();
         else if (msg.command === 'identify') {
           setOverlay(manifestName());
-          setTimeout(() => setOverlay(''), 5_000);
+          clearTimeout(identifyTimer); // repeated identifies would stack timers
+          identifyTimer = setTimeout(() => setOverlay(''), 5_000);
         } else if (msg.command === 'restart') location.reload();
       };
-      ws.onclose = () => {
-        if (!closed) setTimeout(connect, 15_000);
+      socket.onerror = () => socket.close(); // force onclose so reconnect runs
+      socket.onclose = () => {
+        if (socket === ws) scheduleReconnect();
       };
     };
     const manifestName = () => {
@@ -310,6 +382,9 @@ export function WebPlayer() {
     return () => {
       closed = true;
       ws?.close();
+      clearTimeout(retry);
+      clearTimeout(identifyTimer);
+      clearInterval(resync);
       clearInterval(minute);
       clearInterval(beat);
     };

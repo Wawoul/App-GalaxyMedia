@@ -11,9 +11,19 @@ export function setSession(access: string, refresh: string): void {
   localStorage.setItem('gm_refresh', refresh);
 }
 
+/**
+ * Fired when the session is gone for good (refresh rejected/expired). App.tsx
+ * listens and returns to the login screen; without it every page just rendered
+ * its own "HTTP 401" banner and the only way out was a manual browser reload.
+ */
+export const SESSION_EXPIRED_EVENT = 'gm:session-expired';
+
 export function clearSession(): void {
+  const had = accessToken !== null || localStorage.getItem('gm_refresh') !== null;
   accessToken = null;
   localStorage.removeItem('gm_refresh');
+  // Only announce a real transition, so logging out normally doesn't double-fire.
+  if (had) window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
 }
 
 // Pages fire parallel requests (Promise.all) that can all 401 at once when the

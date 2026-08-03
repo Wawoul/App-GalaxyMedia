@@ -111,6 +111,12 @@ export function Schedule({ company, canEdit }: { company: Company; canEdit: bool
   }, [load]);
 
   const [targetType, targetId] = target ? (target.split(':') as [string, string]) : ['', ''];
+  // The screen/group clock the server and players actually resolve against.
+  const targetTimezone =
+    targetType === 'g'
+      ? groups.find((g) => g.id === targetId)?.timezone
+      : screens.find((s) => s.id === targetId)?.timezone;
+  const browserTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const forTarget = assignments.filter((a) =>
     targetType === 'g' ? a.group_id === targetId : a.screen_id === targetId,
   );
@@ -230,6 +236,18 @@ export function Schedule({ company, canEdit }: { company: Company; canEdit: bool
         {canEdit && <span className="muted"> - drag on the calendar to add a time slot</span>}
       </div>
 
+      {/* Times below are the SCREEN's local time, not the admin's browser time -
+          without saying so, scheduling "09:00" from another country silently
+          lands hours off. */}
+      {targetTimezone && (
+        <div className="muted" style={{ margin: '-4px 0 10px', fontSize: 13 }}>
+          All times shown in <strong>{targetTimezone}</strong> (the screen's own clock)
+          {targetTimezone !== browserTimezone && (
+            <> - your browser is on <strong>{browserTimezone}</strong></>
+          )}
+        </div>
+      )}
+
       {error && <div className="error">{error}</div>}
 
       {target && (
@@ -299,6 +317,14 @@ export function Schedule({ company, canEdit }: { company: Company; canEdit: bool
                       // so at least flag that it doesn't run every week, instead
                       // of looking identical to a plain always-on block.
                       const notEveryWeek = a.week_interval > 1 || !!a.start_date || !!a.end_date;
+                      // The tail half of an overnight window is drawn on the
+                      // following day starting at 00:00. Labelling it with the
+                      // assignment's own "22:00-02:00" made it read as a second
+                      // evening slot on the wrong day, so say what it actually is.
+                      const isOvernightTail = startMin === 0 && a.start_time!.slice(0, 5) !== '00:00';
+                      const timeLabel = isOvernightTail
+                        ? `00:00-${a.end_time!.slice(0, 5)} (continues from ${a.start_time!.slice(0, 5)} the night before)`
+                        : `${a.start_time!.slice(0, 5)}-${a.end_time!.slice(0, 5)}`;
                       return (
                       <div key={`${a.id}-${i}`} className={`cal-block${notEveryWeek ? ' cal-block-limited' : ''}`}
                         style={{
@@ -306,7 +332,7 @@ export function Schedule({ company, canEdit }: { company: Company; canEdit: bool
                           height: Math.max(14, ((endMin - startMin) / 60) * PX_PER_HOUR - 2),
                           background: playlistColor(a.playlist_id ?? a.layout_id),
                         }}
-                        title={`${a.playlist_name} · ${a.start_time!.slice(0, 5)}-${a.end_time!.slice(0, 5)}${
+                        title={`${a.playlist_name} · ${timeLabel}${
                           a.week_interval > 1 ? ` · every ${a.week_interval} weeks` : ''
                         }${a.start_date && a.start_date === a.end_date ? ` · one-off ${a.start_date.slice(0, 10)}` : ''}${
                           a.start_date && a.start_date !== a.end_date ? ` · from ${a.start_date.slice(0, 10)}` : ''

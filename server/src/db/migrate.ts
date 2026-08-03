@@ -7,29 +7,45 @@ import { config } from '../config.js';
 
 const MIGRATIONS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'migrations');
 
+// Arbitrary but fixed: any process running migrations for this app uses it.
+const MIGRATION_LOCK_ID = 8_167_432_019;
+
 export async function migrate(): Promise<void> {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      name text PRIMARY KEY,
-      applied_at timestamptz NOT NULL DEFAULT now()
-    )`);
+  // Serialise migrations across processes. Two instances starting together (a
+  // restart overlapping a still-running old process, or a scaled deployment)
+  // would otherwise both try the same file; the loser hits a duplicate-key or
+  // DDL error, exits non-zero, and Restart=always turns that into a crash loop.
+  // The lock is held on one dedicated connection and released in `finally`.
+  const lockClient = await pool.connect();
+  try {
+    await lockClient.query('SELECT pg_advisory_lock($1)', [MIGRATION_LOCK_ID]);
 
-  const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith('.sql')).sort();
-  const { rows } = await pool.query<{ name: string }>('SELECT name FROM schema_migrations');
-  const applied = new Set(rows.map((r) => r.name));
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        name text PRIMARY KEY,
+        applied_at timestamptz NOT NULL DEFAULT now()
+      )`);
 
-  for (const file of files) {
-    if (applied.has(file)) continue;
-    const sql = await readFile(path.join(MIGRATIONS_DIR, file), 'utf8');
-    await withTransaction(async (client) => {
-      await client.query(sql);
-      await client.query('INSERT INTO schema_migrations (name) VALUES ($1)', [file]);
-    });
-    // eslint-disable-next-line no-console
-    console.log(`applied ${file}`);
+    const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith('.sql')).sort();
+    const { rows } = await pool.query<{ name: string }>('SELECT name FROM schema_migrations');
+    const applied = new Set(rows.map((r) => r.name));
+
+    for (const file of files) {
+      if (applied.has(file)) continue;
+      const sql = await readFile(path.join(MIGRATIONS_DIR, file), 'utf8');
+      await withTransaction(async (client) => {
+        await client.query(sql);
+        await client.query('INSERT INTO schema_migrations (name) VALUES ($1)', [file]);
+      });
+      // eslint-disable-next-line no-console
+      console.log(`applied ${file}`);
+    }
+
+    await bootstrapAdmin();
+  } finally {
+    await lockClient.query('SELECT pg_advisory_unlock($1)', [MIGRATION_LOCK_ID]).catch(() => {});
+    lockClient.release();
   }
-
-  await bootstrapAdmin();
 }
 
 /** Create the first MSP admin from env if the users table is empty. */

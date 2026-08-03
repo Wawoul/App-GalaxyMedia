@@ -28,6 +28,7 @@ export interface Screen {
   id: string;
   company_id: string;
   company_name: string;
+  timezone: string; // schedules run on this clock, not the admin's
   name: string;
   paired: boolean;
   online: boolean;

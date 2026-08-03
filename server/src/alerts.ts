@@ -183,14 +183,24 @@ export function notifyRecovery(screenId: string): void {
   })();
 }
 
-export function startAlertLoop(log: { info: (msg: string) => void }): void {
-  let lastCleanup = 0;
+export function startAlertLoop(log: {
+  info: (msg: string) => void;
+  error: (obj: unknown, msg?: string) => void;
+}): void {
+  // Not 0: that makes the 90-day prune run on the first tick after every boot,
+  // so a crash-looping service would re-run a large DELETE over and over.
+  let lastCleanup = Date.now();
   setInterval(() => {
-    void checkOfflineScreens().catch(() => {});
+    // Errors were swallowed silently here, which meant a persistently failing
+    // alert query left the MSP with no offline alerts at all and nothing
+    // anywhere to say so - the worst way for a monitoring feature to fail.
+    void checkOfflineScreens().catch((err) => log.error(err, 'offline alert check failed'));
     // Daily housekeeping: proof-of-play retention (90 days).
     if (Date.now() - lastCleanup > 24 * 3600_000) {
       lastCleanup = Date.now();
-      void query(`DELETE FROM proof_of_play WHERE played_at < now() - interval '90 days'`).catch(() => {});
+      void query(`DELETE FROM proof_of_play WHERE played_at < now() - interval '90 days'`).catch(
+        (err) => log.error(err, 'proof-of-play retention cleanup failed'),
+      );
     }
   }, 60_000).unref();
   log.info('offline alert loop started (channels configured in the Alerts tab)');

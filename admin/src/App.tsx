@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, clearSession, restoreSession } from './api';
+import { api, clearSession, restoreSession, SESSION_EXPIRED_EVENT } from './api';
 import { Alerts } from './pages/Alerts';
 import { Companies } from './pages/Companies';
 import { Login } from './pages/Login';
@@ -37,6 +37,14 @@ export function App() {
       .then((ok) => (ok ? loadSession() : undefined))
       .finally(() => setReady(true));
   }, [loadSession]);
+
+  // An expired refresh token used to leave the UI shell up with every panel
+  // showing its own 401 error; drop straight to the login screen instead.
+  useEffect(() => {
+    const onExpired = () => setMe(null);
+    window.addEventListener(SESSION_EXPIRED_EVENT, onExpired);
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired);
+  }, []);
 
   if (!ready) return null;
   if (!me) return <Login onDone={() => void loadSession()} />;

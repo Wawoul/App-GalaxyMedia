@@ -4,6 +4,18 @@ import { config } from '../config.js';
 export const pool = new pg.Pool({
   connectionString: config.DATABASE_URL,
   max: 10,
+  // Don't let a wedged connect attempt hang a request forever.
+  connectionTimeoutMillis: 10_000,
+  idleTimeoutMillis: 30_000,
+});
+
+// An idle client killed server-side (a Postgres restart during update.sh, or an
+// idle-session timeout) emits 'error' on the pool. With no listener Node treats
+// that as unhandled and kills the process - which, under Restart=always, is a
+// crash loop rather than the transparent reconnect pg already does for us.
+pool.on('error', (err) => {
+  // eslint-disable-next-line no-console
+  console.error('postgres pool error (idle client dropped, will reconnect):', err.message);
 });
 
 export async function query<R extends pg.QueryResultRow = pg.QueryResultRow>(
