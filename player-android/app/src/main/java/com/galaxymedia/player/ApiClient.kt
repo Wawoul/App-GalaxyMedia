@@ -25,6 +25,15 @@ class ApiClient(private val prefs: Prefs) {
         return builder
     }
 
+    /**
+     * OkHttp's body is platform-nullable and genuinely null for a 204 or a
+     * HEAD-style reply, which a misbehaving proxy can return. `!!` there throws an
+     * NPE that lands in a generic catch and tells nobody anything; this fails with
+     * a message naming the call instead.
+     */
+    private fun okhttp3.Response.bodyText(what: String): String =
+        body?.string() ?: error("$what: empty response body (HTTP $code)")
+
     suspend fun register(): RegisterResponse = withContext(Dispatchers.IO) {
         val request = Request.Builder()
             .url("${base()}/api/device/register")
@@ -32,7 +41,7 @@ class ApiClient(private val prefs: Prefs) {
             .build()
         http.newCall(request).execute().use { response ->
             check(response.isSuccessful) { "register failed: ${response.code}" }
-            json.decodeFromString<RegisterResponse>(response.body!!.string())
+            json.decodeFromString<RegisterResponse>(response.bodyText("register"))
         }
     }
 
@@ -40,7 +49,7 @@ class ApiClient(private val prefs: Prefs) {
         val request = Request.Builder().url("${base()}/api/device/register/$requestId").build()
         http.newCall(request).execute().use { response ->
             when {
-                response.isSuccessful -> json.decodeFromString<PollResponse>(response.body!!.string())
+                response.isSuccessful -> json.decodeFromString<PollResponse>(response.bodyText("poll"))
                 response.code == 404 || response.code == 410 -> PollResponse(status = "expired")
                 else -> error("poll failed: ${response.code}")
             }
@@ -52,7 +61,7 @@ class ApiClient(private val prefs: Prefs) {
         http.newCall(request).execute().use { response ->
             if (response.code == 401) throw RevokedException()
             check(response.isSuccessful) { "manifest failed: ${response.code}" }
-            val body = response.body!!.string()
+            val body = response.bodyText("manifest")
             // Decode BEFORE caching: persisting an undecodable manifest would
             // overwrite the last good one, and cachedManifest() silently returns
             // null for it - stranding the screen on the idle message across

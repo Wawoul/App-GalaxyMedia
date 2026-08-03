@@ -48,18 +48,44 @@ const importSchema = z.object({
           main: z.string().nullish(), // playlist NAME references
           side: z.string().nullish(),
           ticker: z.object({ texts: z.array(z.string().max(500)).max(50) }).nullish(),
+          // Same geometry bounds the create endpoint enforces (layouts.ts): an
+          // import is just as capable of producing an off-screen or overlapping
+          // zone, and a hand-edited export is the likeliest source of one.
           custom: z
             .array(
-              z.object({
-                x: z.number(),
-                y: z.number(),
-                w: z.number(),
-                h: z.number(),
-                playlist: z.string().nullish(), // by name
-                tickerTexts: z.array(z.string().max(500)).max(50).nullish(),
-              }),
+              z
+                .object({
+                  x: z.number().min(0).max(0.95),
+                  y: z.number().min(0).max(0.95),
+                  w: z.number().min(0.05).max(1),
+                  h: z.number().min(0.05).max(1),
+                  playlist: z.string().nullish(), // by name
+                  tickerTexts: z.array(z.string().max(500)).max(50).nullish(),
+                })
+                .refine((zone) => zone.x + zone.w <= 1.001 && zone.y + zone.h <= 1.001, {
+                  message: 'zone extends past the screen edge',
+                }),
             )
             .max(6)
+            .refine(
+              (zones) => {
+                const EPS = 0.001;
+                for (let i = 0; i < zones.length; i++) {
+                  for (let j = i + 1; j < zones.length; j++) {
+                    const a = zones[i]!;
+                    const b = zones[j]!;
+                    if (
+                      a.x + a.w > b.x + EPS && b.x + b.w > a.x + EPS &&
+                      a.y + a.h > b.y + EPS && b.y + b.h > a.y + EPS
+                    ) {
+                      return false;
+                    }
+                  }
+                }
+                return true;
+              },
+              { message: 'zones must not overlap' },
+            )
             .nullish(),
         }),
       }),

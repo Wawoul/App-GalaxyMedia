@@ -14,7 +14,7 @@ const createUserSchema = z
     level: z.enum(['msp', 'company']),
     role: z.enum(['admin', 'editor', 'viewer']),
     companyId: z.string().uuid().nullish(),
-    companyAccess: z.array(z.string().uuid()).default([]), // msp editors only
+    companyAccess: z.array(z.string().uuid()).max(500).default([]), // msp editors only
   })
   .refine((u) => (u.level === 'msp' ? !u.companyId : !!u.companyId), {
     message: 'company users need companyId; msp users must not have one',
@@ -88,7 +88,7 @@ export function userRoutes(app: FastifyInstance): void {
     const p = req.principal!;
     if (!isMspAdmin(p)) return reply.code(403).send({ error: 'forbidden' });
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
-    const body = z.object({ companyAccess: z.array(z.string().uuid()) }).parse(req.body);
+    const body = z.object({ companyAccess: z.array(z.string().uuid()).max(500) }).parse(req.body);
 
     const { rows } = await query<{ level: string; role: string }>(
       'SELECT level, role FROM users WHERE id = $1',

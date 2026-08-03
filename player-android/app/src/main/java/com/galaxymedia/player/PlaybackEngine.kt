@@ -17,10 +17,14 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 
 private const val DEFAULT_IMAGE_MS = 10_000L
@@ -118,17 +122,31 @@ private class ZonePlayer(
         // ImageDecoder (API 28+) animates GIF/WebP; older TVs get the first frame.
         val shown = if (android.os.Build.VERSION.SDK_INT >= 28) {
             runCatching {
-                val drawable = android.graphics.ImageDecoder.decodeDrawable(
-                    android.graphics.ImageDecoder.createSource(file),
-                )
+                val drawable = withContext(Dispatchers.IO) {
+                    android.graphics.ImageDecoder.decodeDrawable(
+                        android.graphics.ImageDecoder.createSource(file),
+                    )
+                }
+                // A rapid second "reload" cancels this loop mid-decode; without
+                // this the stale frame would still be pushed into a view the new
+                // loop has already taken over.
+                currentCoroutineContext().ensureActive()
                 imageView.setImageDrawable(drawable)
                 (drawable as? android.graphics.drawable.AnimatedImageDrawable)?.start()
                 true
             }.getOrDefault(false)
         } else false
         if (!shown) {
-            val bitmap = BitmapFactory.decodeFile(file.absolutePath) ?: return
+            // Decode off the main thread: a large JPEG on a slow TV box otherwise
+            // blocks the UI long enough to risk an ANR.
+            val bitmap = withContext(Dispatchers.IO) {
+                runCatching { BitmapFactory.decodeFile(file.absolutePath) }.getOrNull()
+            } ?: return
+            // Recycle the outgoing bitmap: on API 24-27 nothing else frees it, and
+            // the playlist swaps images every few seconds for weeks at a time.
+            val previous = (imageView.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
             imageView.setImageBitmap(bitmap)
+            if (previous != null && previous != bitmap && !previous.isRecycled) previous.recycle()
         }
         imageView.visibility = View.VISIBLE
         playerView.visibility = View.GONE

@@ -33,13 +33,19 @@ const DEFAULTS: AlertSettings = {
 };
 
 let cache: AlertSettings | null = null;
+let cachedAt = 0;
+// saveAlertSettings clears the cache, which is enough in one process - the TTL
+// is so a second process (or a row edited straight in the DB) can't serve stale
+// alert routing indefinitely. One query a minute is free.
+const CACHE_TTL_MS = 60_000;
 
 export async function getAlertSettings(): Promise<AlertSettings> {
-  if (cache) return cache;
+  if (cache && Date.now() - cachedAt < CACHE_TTL_MS) return cache;
   const { rows } = await query<{ value: Partial<AlertSettings> }>(
     `SELECT value FROM settings WHERE key = 'alerts'`,
   );
   cache = { ...DEFAULTS, ...(rows[0]?.value ?? {}) };
+  cachedAt = Date.now();
   return cache;
 }
 

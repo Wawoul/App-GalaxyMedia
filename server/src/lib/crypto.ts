@@ -77,8 +77,11 @@ export function verifyDownload(mediaId: string, token: string): boolean {
   const [subject, expiresAtS, mac] = parts as [string, string, string];
   const expires = Number(expiresAtS);
   if (!Number.isFinite(expires) || expires < Date.now() / 1000) return false;
+  // Sign the literal field, not Number()'s rendering of it: verifying against the
+  // normalized value would accept "0123"/" 123"/"1.23e2" for a token signed with
+  // "123", so the MAC would not actually cover the bytes on the wire.
   const expected = createHmac('sha256', config.JWT_SECRET)
-    .update(`${mediaId}.${subject}.${expires}`)
+    .update(`${mediaId}.${subject}.${expiresAtS}`)
     .digest('base64url');
   return safeEqual(mac, expected);
 }

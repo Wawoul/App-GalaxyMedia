@@ -20,6 +20,9 @@ object CrashReporter {
         context.getSharedPreferences(STORE, Context.MODE_PRIVATE)
 
     fun install(context: Context) {
+        // applicationContext: the handler outlives every Activity, so capturing the
+        // Activity here would pin it (and its view tree) for the life of the process.
+        val appContext = context.applicationContext
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             runCatching {
@@ -28,7 +31,7 @@ object CrashReporter {
                     throwable.message?.let { append(": ").append(it.take(200)) }
                     throwable.stackTrace.firstOrNull()?.let { append(" at ").append(it) }
                 }
-                store(context).edit()
+                store(appContext).edit()
                     .putString(KEY_AT, java.time.Instant.now().toString())
                     .putString(KEY_MESSAGE, summary.take(500))
                     .commit() // synchronous: the process is about to die, apply() may never flush

@@ -459,6 +459,10 @@ class MainActivity : AppCompatActivity() {
         runCatching {
             api.heartbeat(BuildConfig.VERSION_NAME, currentItem ?: "Idle - nothing assigned", cache.freeSpaceMb())
         }
+        // A sync that got this far proves the server is reachable again, so don't
+        // leave the socket sitting on a 2-minute backoff earned during the outage -
+        // that delays every push command for minutes after recovery.
+        wsFailureCount = 0
     }
 
     private fun connectWebSocket() {

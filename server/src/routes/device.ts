@@ -78,6 +78,19 @@ export function deviceRoutes(app: FastifyInstance): void {
 
   app.register(async (scope) => {
     scope.addHook('preHandler', requireDevice);
+    // Keyed per screen, not per IP: a whole site's TVs share one public address,
+    // so an IP key would make screens throttle each other. A healthy player
+    // heartbeats every 45s and syncs on push, so 60/min is orders of magnitude
+    // of headroom while still bounding a compromised token (each heartbeat may
+    // carry up to 500 proof-of-play rows).
+    scope.addHook(
+      'onRequest',
+      scope.rateLimit({
+        max: 60,
+        timeWindow: '1 minute',
+        keyGenerator: (req) => req.screenId ?? req.ip,
+      }),
+    );
 
     /**
      * Sync manifest: everything the screen needs to play, with signed media URLs.

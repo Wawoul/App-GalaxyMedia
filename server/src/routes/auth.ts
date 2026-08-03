@@ -153,9 +153,18 @@ export function authRoutes(app: FastifyInstance): void {
         // Consume-once: a TOTP code stays valid for ~90s (window ±1), so an
         // observed code could otherwise open a second session. The WHERE makes
         // the check-and-set atomic even across concurrent attempts.
+        //
+        // The step guard covers the case the hash alone misses: observe code N,
+        // wait for the user to log in with N+1, then replay N while it is still
+        // inside its validity window. Any code from a step at or before the last
+        // accepted one is refused, whatever its hash.
+        const step = Math.floor(Date.now() / 30_000);
         const { rowCount } = await query(
-          'UPDATE users SET totp_last_used = $2 WHERE id = $1 AND totp_last_used IS DISTINCT FROM $2',
-          [user.id, codeHash],
+          `UPDATE users SET totp_last_used = $2, totp_last_used_at = now()
+           WHERE id = $1
+             AND totp_last_used IS DISTINCT FROM $2
+             AND (totp_last_used_at IS NULL OR totp_last_used_at < to_timestamp($3))`,
+          [user.id, codeHash, step * 30],
         );
         if (!rowCount) {
           audit({ userId: user.id, action: 'auth.2fa_replayed', ip: req.ip });
@@ -183,7 +192,24 @@ export function authRoutes(app: FastifyInstance): void {
         [hash],
       );
       const row = rows[0];
-      if (!row) return reply.code(401).send({ error: 'invalid_refresh' });
+      if (!row) {
+        // Presenting an already-revoked token means it was rotated by someone -
+        // either this client replaying, or a thief racing the legitimate user.
+        // Can't tell which, so drop every live session for that user and make
+        // them sign in again; a thief keeping a valid chain is the worse outcome.
+        const { rows: reused } = await query<{ user_id: string }>(
+          'SELECT user_id FROM refresh_tokens WHERE token_hash = $1',
+          [hash],
+        );
+        const victim = reused[0]?.user_id;
+        if (victim) {
+          await query('UPDATE refresh_tokens SET revoked = true WHERE user_id = $1 AND NOT revoked', [
+            victim,
+          ]);
+          audit({ userId: victim, action: 'auth.refresh_reuse', ip: req.ip });
+        }
+        return reply.code(401).send({ error: 'invalid_refresh' });
+      }
       return reply.send(await issueSession(row.user_id));
     });
   });
