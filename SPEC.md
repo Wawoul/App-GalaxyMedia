@@ -305,6 +305,15 @@ The repo may be published on GitHub, so from the first commit:
 - Two companies' admins can never see each other's screens or media (verified by tests:
   `server/src/routes/isolation.test.ts` drives the real routes - list, read, modify, delete,
   and mass-assignment of a foreign `companyId` - against a live database).
+- Moving a screen between companies leaves nothing behind: its proof-of-play history and
+  screenshot do not follow it or linger under the old tenant
+  (`server/src/routes/lifecycle.test.ts`).
+- The dashboard's "now playing" agrees with what the TV actually plays - same priority,
+  date-range, day-of-week and time-window rules, evaluated in the screen's timezone
+  (`lifecycle.test.ts`; each assertion verified to fail against the pre-fix query).
+- Config import is safe to repeat: name collisions get bounded suffixes rather than
+  compounding ones, and custom layout zones are held to the same geometry rules the
+  create endpoint enforces (`lifecycle.test.ts`).
 - An `msp_editor` sees exactly the companies on their access list - nothing else appears in any
   list, search, or API response; removing a company from their list locks them out immediately
   (role logic unit-tested in `permissions.test.ts`; not yet covered end-to-end at the route level).

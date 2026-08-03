@@ -2,6 +2,11 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
+    // One file at a time: the route tests share a single database and each
+    // truncates the tables it owns, so running two in parallel has them delete
+    // each other's fixtures mid-run. The suite is fast enough that serialising
+    // costs nothing, and it keeps failures meaningful rather than flaky.
+    fileParallelism: false,
     // Vite injects BASE_URL="/" into worker env, so config values must be set
     // explicitly here (a `??=` default in a test file won't win).
     env: {
