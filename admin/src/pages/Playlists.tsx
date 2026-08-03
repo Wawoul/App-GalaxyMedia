@@ -2,6 +2,12 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
 import type { Company, MediaItem, Playlist, PlaylistItem } from '../types';
 
+/** Same rule the players use to decide an item is a live stream. */
+const isStreamUrl = (url: string) => {
+  const path = url.split('?')[0]!.toLowerCase();
+  return path.endsWith('.m3u8') || path.endsWith('.mpd');
+};
+
 export function Playlists({ company, canEdit }: { company: Company; canEdit: boolean }) {
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [media, setMedia] = useState<MediaItem[]>([]);
@@ -169,9 +175,14 @@ export function Playlists({ company, canEdit }: { company: Company; canEdit: boo
                 onChange={(e) => setNewUrl(e.target.value)} style={{ minWidth: 260 }} />
               <button className="secondary" disabled={!newUrl.startsWith('http')}
                 onClick={() => {
+                  const url = newUrl.trim();
                   setItems([...items, {
-                    media_id: null, url: newUrl.trim(),
-                    duration_ms: 30000, // web pages need an explicit duration; default 30s
+                    media_id: null, url,
+                    // Web pages need an explicit duration (30s). For a live
+                    // stream the value is a restart interval, not a stop time,
+                    // so 30s would needlessly re-buffer the feed twice a minute -
+                    // an hour matches the players' own default.
+                    duration_ms: isStreamUrl(url) ? 3_600_000 : 30_000,
                     enabled: true, muted: false, kind: 'url',
                   }]);
                   setNewUrl('');
@@ -182,7 +193,7 @@ export function Playlists({ company, canEdit }: { company: Company; canEdit: boo
             </div>
           )}
           <table>
-            <thead><tr><th>#</th><th>Item</th><th>Duration</th><th>Enabled</th><th>Muted</th>{canEdit && <th></th>}</tr></thead>
+            <thead><tr><th>#</th><th>Item</th><th>Duration (seconds)</th><th>Enabled</th><th>Muted</th>{canEdit && <th></th>}</tr></thead>
             <tbody>
               {items.map((item, index) => (
                 // Keyed by identity, not index: the move buttons below reorder
@@ -213,6 +224,13 @@ export function Playlists({ company, canEdit }: { company: Company; canEdit: boo
                         }} />
                     ) : (
                       <span className="muted">{item.duration_ms ? `${item.duration_ms / 1000}s` : 'auto'}</span>
+                    )}
+                    {canEdit && (
+                      // The unit is only in the column header otherwise, which is
+                      // off-screen once the table scrolls.
+                      <span className="muted" style={{ marginLeft: 6, fontSize: 12 }}>
+                        s{item.url && isStreamUrl(item.url) ? ' (restart interval)' : ''}
+                      </span>
                     )}
                   </td>
                   <td>
