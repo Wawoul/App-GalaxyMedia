@@ -186,6 +186,19 @@ installer in public mode. Use HTTPS for anything reachable from the internet.
    on-screen code. All future app updates ship from the System tab automatically -
    for those OTA updates to install, allow **"Install unknown apps"** for the player
    app on each TV (Settings → Apps → Special app access), ideally during setup.
+4. **Recommended for unattended screens**, one adb command per TV:
+
+   ```bash
+   adb shell appops set com.galaxymedia.player SYSTEM_ALERT_WINDOW allow
+   ```
+
+   The player runs as a foreground service, which stops Android evicting it under
+   memory pressure - the usual cause of a screen quietly dropping back to the TV's
+   home launcher after days of uptime. If it *does* die anyway, a watchdog relaunches
+   it, but since Android 10 an app with no visible window isn't allowed to start an
+   activity at all, so that relaunch only works with the permission above. Android TV
+   has no Settings UI for it, hence adb. Skipping this is safe - you keep the
+   foreground service and lose only the self-relaunch backstop.
 
 **Any browser (kiosk PCs, Raspberry Pi, quick previews - needs connectivity):**
 

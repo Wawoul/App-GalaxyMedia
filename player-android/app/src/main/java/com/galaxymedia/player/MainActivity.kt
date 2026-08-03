@@ -64,6 +64,10 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         CrashReporter.install(this)
+        // Started from the Activity, not BootReceiver: Android 15 forbids
+        // starting a mediaPlayback foreground service from a BOOT_COMPLETED
+        // receiver, and BootReceiver launches this Activity anyway.
+        PlayerService.start(this)
         Watchdog.schedule(this)
         Watchdog.markAlive(this)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)

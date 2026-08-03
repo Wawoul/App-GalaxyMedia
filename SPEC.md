@@ -111,9 +111,18 @@ MSP (platform owner)
 
 - **Boot behavior**: auto-start on TV boot (`BOOT_COMPLETED` receiver), stays in the
   foreground (kiosk-style; document the TCL settings needed, e.g. disabling screensaver).
-  A watchdog (`AlarmManager`-scheduled dead-man's-switch, independent of network state)
-  relaunches the app if it crashes or hangs, without needing the TV itself to reboot -
-  boot-time recovery alone only covers a power cut, not a live crash.
+  Survival on unattended hardware is two-layered, because boot-time recovery alone only
+  covers a power cut, not a live death:
+  - **Prevention**: a `mediaPlayback` foreground service (`START_STICKY`) keeps the
+    process at foreground priority. Memory-pressure eviction on cheap 1 GB TV boxes -
+    not app crashes - is the common cause of a screen silently returning to the
+    launcher after days of uptime, and this is what actually stops it.
+  - **Recovery**: an `AlarmManager` dead-man's-switch (`ELAPSED_REALTIME_WAKEUP` +
+    `setExactAndAllowWhileIdle`, so it still fires while the TV dozes) relaunches the
+    app if its liveness mark goes stale. Android 10+ blocks background activity
+    starts, so this path additionally requires the service's `SYSTEM_ALERT_WINDOW`
+    overlay - a one-time per-TV `adb appops` grant. It degrades soft: without the
+    grant the foreground service still runs, only the relaunch backstop is lost.
 - **Offline-first (hard requirement)**: downloads all assigned media to local storage ahead of
   time (checksum-verified), plays from cache; if the server is unreachable it keeps playing the
   last-known schedule indefinitely. Specifically:

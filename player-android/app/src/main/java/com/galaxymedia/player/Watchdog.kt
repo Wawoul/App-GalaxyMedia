@@ -6,6 +6,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.os.Build
 import android.os.SystemClock
 
 private const val CHECK_INTERVAL_MS = 5 * 60_000L // how often the alarm fires
@@ -45,26 +46,48 @@ object Watchdog {
         )
     }
 
-    /** Call once per process start (MainActivity.onCreate); re-arms on every launch. */
+    /**
+     * Arms the next check. Self-rescheduling one-shot rather than
+     * setInexactRepeating: only the ...AndAllowWhileIdle variants fire while the
+     * device is dozing, and an idle TV box is exactly the state we need to
+     * recover from. ELAPSED_REALTIME_WAKEUP (not the non-wakeup variant, which
+     * merely fires "whenever the device next wakes" - possibly never on an
+     * unattended screen) so the check actually happens.
+     */
     fun schedule(context: Context) {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        // Inexact repeating: a TV box is mains-powered and idle-tolerant, and this
-        // doesn't need second-level precision - exact alarms would just cost battery
-        // on the (rare) battery-backed unit for no real benefit here.
-        alarmManager.setInexactRepeating(
-            AlarmManager.ELAPSED_REALTIME,
-            SystemClock.elapsedRealtime() + CHECK_INTERVAL_MS,
-            CHECK_INTERVAL_MS,
-            pendingIntent(context),
-        )
+        val at = SystemClock.elapsedRealtime() + CHECK_INTERVAL_MS
+        val intent = pendingIntent(context)
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                alarmManager.setExactAndAllowWhileIdle(
+                    AlarmManager.ELAPSED_REALTIME_WAKEUP, at, intent,
+                )
+            } else {
+                alarmManager.setExact(AlarmManager.ELAPSED_REALTIME_WAKEUP, at, intent)
+            }
+        }.onFailure {
+            // Exact-alarm permission can be revoked by the user/OEM; an inexact
+            // check that sometimes runs late still beats no watchdog at all.
+            runCatching { alarmManager.set(AlarmManager.ELAPSED_REALTIME_WAKEUP, at, intent) }
+        }
     }
 
     fun checkAndRecover(context: Context) {
+        // Re-arm first: this is a one-shot alarm, so an early return below must
+        // not be allowed to end the watchdog chain permanently.
+        schedule(context)
+        // Keeps the process alive and, with the overlay, keeps the relaunch
+        // below legal - safe to call when already running.
+        PlayerService.start(context)
         if (!isStale(context)) return
         val launch = Intent(context, MainActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
         }
-        context.startActivity(launch)
+        // Blocked by the OS unless the app holds a visible overlay window
+        // (PlayerService) - without that grant this throws rather than recovering,
+        // so don't let it take the alarm chain down with it.
+        runCatching { context.startActivity(launch) }
     }
 }
 
