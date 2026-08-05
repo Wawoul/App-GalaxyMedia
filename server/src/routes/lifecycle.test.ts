@@ -289,6 +289,19 @@ describeDb('heartbeat media error reporting', () => {
     expect(row.rows[0]!.media_error).toBeNull();
   });
 
+  it('clears a stale battery reading once the player stops sending one', async () => {
+    // A TV box has no battery, but a stub HAL on a reflashed image reports a
+    // fixed value. Once the player learns to reject that and sends null, the
+    // stored value has to clear - coalesce kept it frozen at 50% forever.
+    await beat({ batteryPct: 50 });
+    let row = await query('SELECT battery_pct FROM screens WHERE id = $1', [screenId]);
+    expect(Number(row.rows[0]!.battery_pct)).toBe(50);
+
+    await beat({ batteryPct: null });
+    row = await query('SELECT battery_pct FROM screens WHERE id = $1', [screenId]);
+    expect(row.rows[0]!.battery_pct).toBeNull();
+  });
+
   it('still records the other telemetry alongside it', async () => {
     await beat({ mediaError: 'x: fail', localIp: '10.1.2.3', ramFreeMb: 256 });
     const row = await query(

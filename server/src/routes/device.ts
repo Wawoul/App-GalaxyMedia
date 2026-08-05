@@ -347,7 +347,13 @@ export function deviceRoutes(app: FastifyInstance): void {
       await query(
         `UPDATE screens SET last_seen_at = now(), app_version = coalesce($2, app_version),
            ip = $3, current_item = $4, storage_free_mb = coalesce($5, storage_free_mb),
-           battery_pct = coalesce($6, battery_pct), ram_free_mb = coalesce($7, ram_free_mb),
+           -- Battery is set directly rather than coalesced. Every other reading
+           -- is coalesced so an older player that omits it keeps the last known
+           -- value, but battery is the one field where "absent" is the answer:
+           -- a TV box has none, and a stale reading (a stub HAL's fixed 50%,
+           -- frozen here forever) is worse than a blank. Players that never send
+           -- it simply keep it null, which is correct for them too.
+           battery_pct = $6, ram_free_mb = coalesce($7, ram_free_mb),
            ram_total_mb = coalesce($8, ram_total_mb), cpu_pct = coalesce($9, cpu_pct),
            wifi_rssi = coalesce($10, wifi_rssi), uptime_s = coalesce($11, uptime_s),
            last_crash_at = coalesce($12, last_crash_at),
