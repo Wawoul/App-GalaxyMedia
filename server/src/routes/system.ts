@@ -12,6 +12,7 @@ import { query } from '../db/pool.js';
 import { audit } from '../lib/audit.js';
 import { signDownload, verifyDownload } from '../lib/crypto.js';
 import { isMspAdmin } from '../lib/permissions.js';
+import { readApkVersion } from '../lib/apkVersion.js';
 import { requireUser } from '../plugins/auth.js';
 
 export interface ApkRelease {
@@ -139,8 +140,9 @@ export function systemRoutes(app: FastifyInstance): void {
       });
     });
 
-    // Upload a new player release. Version fields come as multipart fields
-    // (parsing them out of the APK would need aapt on the server).
+    // Upload a new player release. The version is read from the APK itself
+    // after the file lands; the typed fields are only a fallback for a build
+    // this parser can't read.
     scope.post('/api/system/apk', async (req, reply) => {
       const part = await req.file();
       if (!part) return reply.code(400).send({ error: 'no_file' });
@@ -186,9 +188,20 @@ export function systemRoutes(app: FastifyInstance): void {
         throw err;
       }
 
+      // Read the version out of the APK and prefer it over what was typed. The
+      // player only offers an update when the server's versionCode is HIGHER
+      // than its own, so a mistyped number silently disables updates fleet-wide
+      // with no error anywhere - which is exactly what happened in the field.
+      const actual = readApkVersion(apkPath());
+      if (actual.versionCode !== null && actual.versionCode !== fields.versionCode) {
+        req.log.warn(
+          { typed: fields.versionCode, actual: actual.versionCode },
+          'apk versionCode did not match the file; using the file',
+        );
+      }
       const release: ApkRelease = {
-        versionCode: fields.versionCode,
-        versionName: fields.versionName,
+        versionCode: actual.versionCode ?? fields.versionCode,
+        versionName: actual.versionName ?? fields.versionName,
         sha256: hasher.digest('hex'),
         sizeBytes: size,
         uploadedAt: new Date().toISOString(),
