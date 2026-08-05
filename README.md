@@ -10,6 +10,14 @@ Self-hosted digital signage for MSPs. No per-screen licensing, No "Freemium" - y
   between companies. Five role levels (MSP admin/editor, company admin/editor/viewer)
   gate what each user can see and do, with per-editor company access lists for MSP
   staff who only manage some companies.
+- **Big files**: media can be **imported by link** instead of uploaded - paste a URL
+  and the server fetches the file itself. Dropbox/Drive/OneDrive share links are
+  converted to direct downloads automatically. This is the way in for files that a
+  proxy won't accept as an upload (Cloudflare's free plan caps request bodies at
+  100 MB, so a 300 MB video can't be POSTed through it) and for slow office
+  uplinks, since the server usually has the better connection. Downloads are
+  unaffected by that cap, so screens pull large media through the same hostname
+  without trouble.
 - **Content**: media library with folders - images (JPG, PNG, GIF, WebP, BMP) and
   videos (MP4, MOV, WebM, MKV), validated by content sniffing, not file extension -
   playlists (with per-item mute, live web pages, and live HLS/DASH streams),

@@ -11,6 +11,7 @@ import { query, withTransaction } from '../db/pool.js';
 import { audit } from '../lib/audit.js';
 import { signDownload, verifyDownload } from '../lib/crypto.js';
 import { canAccessCompany } from '../lib/permissions.js';
+import { fetchRemoteFile } from '../lib/fetchUrl.js';
 import { extFromMime, sniffMediaType } from '../lib/uploads.js';
 import { requireUser } from '../plugins/auth.js';
 import { notifyCompany } from '../ws.js';
@@ -18,6 +19,73 @@ import { notifyCompany } from '../ws.js';
 /** Media lives at MEDIA_DIR/<companyId>/<mediaId>.<ext> - server-generated names only. */
 export function mediaPath(companyId: string, mediaId: string, ext: string): string {
   return path.join(config.MEDIA_DIR, companyId, `${mediaId}.${ext}`);
+}
+
+/**
+ * Streams `source` to disk, hashing and content-sniffing as it goes, then
+ * records it. Shared by the browser upload and the fetch-from-URL import so the
+ * two can't drift apart on validation - the sniff in particular is the only
+ * thing standing between "an admin pasted a link" and "we stored a .exe".
+ *
+ * `maxBytes` is enforced here rather than trusted from a Content-Length, since
+ * a remote server can lie about or omit it.
+ */
+async function storeMediaStream(opts: {
+  companyId: string;
+  userId: string;
+  folderId: string | null;
+  originalName: string;
+  source: NodeJS.ReadableStream;
+  maxBytes: number;
+}): Promise<Record<string, unknown>> {
+  const mediaId = randomUUID();
+  const dir = path.join(config.MEDIA_DIR, opts.companyId);
+  await mkdir(dir, { recursive: true });
+  const tmpFile = path.join(dir, `.upload-${mediaId}`);
+
+  const hasher = createHash('sha256');
+  let head = Buffer.alloc(0);
+  let size = 0;
+  const tap = new Transform({
+    transform(chunk: Buffer, _enc, cb) {
+      size += chunk.length;
+      if (size > opts.maxBytes) {
+        cb(Object.assign(new Error('too_large'), { statusCode: 413 }));
+        return;
+      }
+      hasher.update(chunk);
+      if (head.length < 64) head = Buffer.concat([head, chunk]).subarray(0, 64);
+      cb(null, chunk);
+    },
+  });
+
+  try {
+    await pipeline(opts.source, tap, createWriteStream(tmpFile, { flags: 'wx', mode: 0o640 }));
+    const sniffed = sniffMediaType(head);
+    if (!sniffed) throw Object.assign(new Error('unsupported_type'), { statusCode: 415 });
+
+    await rename(tmpFile, mediaPath(opts.companyId, mediaId, sniffed.ext));
+    const { rows } = await query(
+      `INSERT INTO media (id, company_id, kind, original_name, mime, size_bytes, sha256, folder_id, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING id, kind, original_name, mime, size_bytes, sha256, folder_id, created_at`,
+      [
+        mediaId,
+        opts.companyId,
+        sniffed.kind,
+        opts.originalName,
+        sniffed.mime,
+        size,
+        hasher.digest('hex'),
+        opts.folderId,
+        opts.userId,
+      ],
+    );
+    return rows[0]!;
+  } catch (err) {
+    await unlink(tmpFile).catch(() => {});
+    throw err;
+  }
 }
 
 export function mediaRoutes(app: FastifyInstance): void {
@@ -268,6 +336,59 @@ export function mediaRoutes(app: FastifyInstance): void {
       return reply.code(201).send(created[0]);
     });
 
+    /**
+     * Import media by URL: the server fetches the file itself, so nothing large
+     * traverses the admin's connection. This is the answer to a proxy that caps
+     * request bodies - Cloudflare's free plan stops uploads at 100MB, and a
+     * 300MB video simply cannot be POSTed through it - as well as to slow
+     * office uplinks, since the server usually has the better connection.
+     *
+     * Runs long: a big file over a slow origin can take many minutes, so the
+     * response is deliberately sent only once the file is stored and verified.
+     */
+    scope.post('/api/companies/:companyId/media/import', async (req, reply) => {
+      const { companyId } = z.object({ companyId: z.string().uuid() }).parse(req.params);
+      if (!canAccessCompany(req.principal!, companyId, 'editor')) {
+        return reply.code(403).send({ error: 'forbidden' });
+      }
+      const body = z
+        .object({
+          url: z.string().url().max(2000),
+          folderId: z.string().uuid().nullish(),
+          name: z.string().trim().min(1).max(300).nullish(),
+        })
+        .parse(req.body);
+
+      if (body.folderId) {
+        const { rowCount } = await query(
+          'SELECT 1 FROM media_folders WHERE id = $1 AND company_id = $2',
+          [body.folderId, companyId],
+        );
+        if (!rowCount) return reply.code(400).send({ error: 'folder_not_found' });
+      }
+
+      const maxBytes = config.MAX_UPLOAD_MB * 1024 * 1024;
+      const remote = await fetchRemoteFile(body.url, { maxBytes });
+      const created = await storeMediaStream({
+        companyId,
+        userId: req.principal!.id,
+        folderId: body.folderId ?? null,
+        originalName: body.name?.trim() || remote.suggestedName,
+        source: remote.body,
+        maxBytes,
+      });
+      audit({
+        userId: req.principal!.id,
+        companyId,
+        action: 'media.import_url',
+        entityId: created.id as string,
+        ip: req.ip,
+        detail: { url: body.url.slice(0, 200) },
+      });
+      notifyCompany(companyId, { type: 'sync' });
+      return reply.code(201).send(created);
+    });
+
     scope.post('/api/companies/:companyId/media', async (req, reply) => {
       const { companyId } = z.object({ companyId: z.string().uuid() }).parse(req.params);
       if (!canAccessCompany(req.principal!, companyId, 'editor')) {
@@ -290,53 +411,30 @@ export function mediaRoutes(app: FastifyInstance): void {
         if (!rowCount) return reply.code(400).send({ error: 'folder_not_found' });
       }
 
-      const mediaId = randomUUID();
-      const dir = path.join(config.MEDIA_DIR, companyId);
-      await mkdir(dir, { recursive: true });
-      const tmpFile = path.join(dir, `.upload-${mediaId}`);
-
-      // Stream to disk while hashing and sniffing the first bytes.
-      const hasher = createHash('sha256');
-      let head = Buffer.alloc(0);
-      let size = 0;
-      const tap = new Transform({
-        transform(chunk: Buffer, _enc, cb) {
-          hasher.update(chunk);
-          size += chunk.length;
-          if (head.length < 64) head = Buffer.concat([head, chunk]).subarray(0, 64);
-          cb(null, chunk);
-        },
+      const created = await storeMediaStream({
+        companyId,
+        userId: req.principal!.id,
+        folderId,
+        originalName: path.basename(part.filename ?? 'upload'),
+        source: part.file,
+        maxBytes: config.MAX_UPLOAD_MB * 1024 * 1024,
       });
-      try {
-        await pipeline(part.file, tap, createWriteStream(tmpFile, { flags: 'wx', mode: 0o640 }));
-        if (part.file.truncated) throw Object.assign(new Error('too_large'), { statusCode: 413 });
-        const sniffed = sniffMediaType(head);
-        if (!sniffed) throw Object.assign(new Error('unsupported_type'), { statusCode: 415 });
-
-        await rename(tmpFile, mediaPath(companyId, mediaId, sniffed.ext));
-        const { rows } = await query(
-          `INSERT INTO media (id, company_id, kind, original_name, mime, size_bytes, sha256, folder_id, created_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-           RETURNING id, kind, original_name, mime, size_bytes, sha256, folder_id, created_at`,
-          [
-            mediaId,
-            companyId,
-            sniffed.kind,
-            path.basename(part.filename ?? 'upload'),
-            sniffed.mime,
-            size,
-            hasher.digest('hex'),
-            folderId,
-            req.principal!.id,
-          ],
-        );
-        audit({ userId: req.principal!.id, companyId, action: 'media.upload', entityId: mediaId, ip: req.ip });
-        notifyCompany(companyId, { type: 'sync' });
-        return reply.code(201).send(rows[0]);
-      } catch (err) {
-        await unlink(tmpFile).catch(() => {});
-        throw err;
+      // multipart's own limit truncates rather than throwing, so check it too.
+      if (part.file.truncated) {
+        await unlink(mediaPath(companyId, created.id as string, extFromMime(created.mime as string)))
+          .catch(() => {});
+        await query('DELETE FROM media WHERE id = $1', [created.id]);
+        return reply.code(413).send({ error: 'too_large' });
       }
+      audit({
+        userId: req.principal!.id,
+        companyId,
+        action: 'media.upload',
+        entityId: created.id as string,
+        ip: req.ip,
+      });
+      notifyCompany(companyId, { type: 'sync' });
+      return reply.code(201).send(created);
     });
 
     scope.delete('/api/media/:id', async (req, reply) => {

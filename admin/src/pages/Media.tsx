@@ -30,6 +30,7 @@ export function Media({ company, canEdit }: { company: Company; canEdit: boolean
   const [currentFolder, setCurrentFolder] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [uploading, setUploading] = useState<{ name: string; percent: number } | null>(null);
+  const [importing, setImporting] = useState(false);
   const [movingId, setMovingId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState<'name' | 'newest' | 'largest' | 'type'>('name');
@@ -78,6 +79,36 @@ export function Media({ company, canEdit }: { company: Company; canEdit: boolean
     } finally {
       setUploading(null);
       if (fileInput.current) fileInput.current.value = '';
+    }
+  };
+
+  /**
+   * Import by URL: the server fetches the file itself, so the bytes never cross
+   * the admin's connection. This is how a 300MB video gets in when a proxy caps
+   * request bodies - Cloudflare's free plan stops uploads at 100MB - or when the
+   * office uplink is simply slower than the server's.
+   */
+  const importFromUrl = async () => {
+    const url = window.prompt(
+      'Paste a direct link to the file.\n\n' +
+        'The server downloads it itself, so this works for files too big to upload ' +
+        '(e.g. through Cloudflare\'s 100MB limit).\n\n' +
+        'Dropbox, Google Drive and OneDrive share links are converted automatically.',
+    );
+    if (!url?.trim()) return;
+    setError('');
+    // No progress events to hook: the server streams it, so the request simply
+    // stays open until it's done. Show that rather than leaving a dead button.
+    setImporting(true);
+    try {
+      await api(`/api/companies/${company.id}/media/import`, {
+        body: { url: url.trim(), folderId: currentFolder },
+      });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'import failed');
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -143,8 +174,12 @@ export function Media({ company, canEdit }: { company: Company; canEdit: boolean
               <input ref={fileInput} type="file" multiple style={{ display: 'none' }}
                 accept="image/jpeg,image/png,image/gif,image/bmp,image/webp,video/mp4,video/quicktime,video/webm,video/x-matroska,.mkv,.mov"
                 onChange={(e) => upload(e.target.files)} />
-              <button onClick={() => fileInput.current?.click()} disabled={uploading !== null}>
+              <button onClick={() => fileInput.current?.click()} disabled={uploading !== null || importing}>
                 ⬆ Upload files
+              </button>
+              <button className="secondary" onClick={importFromUrl} disabled={uploading !== null || importing}
+                title="The server downloads the file itself - use this for files too large to upload">
+                {importing ? "Downloading…" : "🔗 Import from link"}
               </button>
               {uploading && (
                 <div className="row" style={{ minWidth: 240 }}>
