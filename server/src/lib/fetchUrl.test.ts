@@ -25,6 +25,46 @@ describe('fetchRemoteFile SSRF guards', () => {
     await expect(fetchRemoteFile(url, opts)).rejects.toThrow();
   });
 
+  // An IPv6 address can carry an IPv4 one in several notations, and matching
+  // only the dotted spelling of ::ffff: left the hex form reaching loopback -
+  // a complete bypass. Each notation below is a real address for a blocked
+  // target, so these must all stay refused.
+  it.each([
+    ['http://[::ffff:7f00:1]/x', 'IPv4-mapped loopback, hex form'],
+    ['http://[::ffff:c0a8:1]/x', 'IPv4-mapped 192.168.0.1, hex form'],
+    ['http://[::ffff:127.0.0.1]/x', 'IPv4-mapped loopback, dotted form'],
+    ['http://[::ffff:a9fe:a9fe]/x', 'IPv4-mapped cloud metadata'],
+    ['http://[::127.0.0.1]/x', 'deprecated IPv4-compatible'],
+    ['http://[64:ff9b::7f00:1]/x', 'NAT64-embedded loopback'],
+    ['http://[2002:7f00:1::]/x', '6to4-embedded loopback'],
+    ['http://[fd00::1]/x', 'unique-local'],
+    ['http://[fe80::1]/x', 'link-local'],
+  ])('rejects %s (%s)', async (url) => {
+    await expect(fetchRemoteFile(url, opts)).rejects.toThrow(/not reachable/i);
+  });
+
+  it.each([
+    ['http://198.18.0.1/x', 'benchmarking range'],
+    ['http://192.0.2.5/x', 'TEST-NET-1'],
+    ['http://198.51.100.5/x', 'TEST-NET-2'],
+    ['http://203.0.113.5/x', 'TEST-NET-3'],
+    ['http://192.0.0.8/x', 'IETF protocol assignments'],
+  ])('rejects %s (%s)', async (url) => {
+    await expect(fetchRemoteFile(url, opts)).rejects.toThrow(/not reachable/i);
+  });
+
+  // Alternate spellings of 127.0.0.1 - WHATWG URL normalises these, but assert
+  // it rather than trusting it.
+  it.each([
+    ['http://0177.0.0.1/x', 'octal'],
+    ['http://2130706433/x', 'decimal'],
+    ['http://0x7f.0.0.1/x', 'hex octet'],
+    ['http://127.1/x', 'short form'],
+    ['http://user:pass@127.0.0.1/x', 'with credentials'],
+  ])('rejects %s (%s)', async (url) => {
+    await expect(fetchRemoteFile(url, opts)).rejects.toThrow(/not reachable/i);
+  });
+
   it.each([
     ['file:///etc/passwd', 'file scheme'],
     ['ftp://example.com/x', 'ftp scheme'],

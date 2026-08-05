@@ -12,6 +12,7 @@ import { audit } from '../lib/audit.js';
 import { signDownload, verifyDownload } from '../lib/crypto.js';
 import { canAccessCompany } from '../lib/permissions.js';
 import { fetchRemoteFile } from '../lib/fetchUrl.js';
+import { createJob, failJob, finishJob, getJob, updateProgress } from '../lib/importJobs.js';
 import { extFromMime, sniffMediaType } from '../lib/uploads.js';
 import { requireUser } from '../plugins/auth.js';
 import { notifyCompany } from '../ws.js';
@@ -37,6 +38,8 @@ async function storeMediaStream(opts: {
   originalName: string;
   source: NodeJS.ReadableStream;
   maxBytes: number;
+  /** Called as bytes land, so a URL import can report progress. */
+  onProgress?: (receivedBytes: number) => void;
 }): Promise<Record<string, unknown>> {
   const mediaId = randomUUID();
   const dir = path.join(config.MEDIA_DIR, opts.companyId);
@@ -55,6 +58,7 @@ async function storeMediaStream(opts: {
       }
       hasher.update(chunk);
       if (head.length < 64) head = Buffer.concat([head, chunk]).subarray(0, 64);
+      opts.onProgress?.(size);
       cb(null, chunk);
     },
   });
@@ -368,25 +372,81 @@ export function mediaRoutes(app: FastifyInstance): void {
       }
 
       const maxBytes = config.MAX_UPLOAD_MB * 1024 * 1024;
+      // Open the connection before replying, so an unreachable link or a
+      // blocked address is reported straight away rather than as a job that
+      // fails a moment later.
       const remote = await fetchRemoteFile(body.url, { maxBytes });
-      const created = await storeMediaStream({
+
+      // Captured now: the callbacks below run minutes after this request has
+      // been answered, and reaching into `req` at that point is reading state
+      // Fastify has finished with.
+      const userId = req.principal!.id;
+      const requestIp = req.ip;
+      const log = req.server.log;
+      const job = createJob({
+        id: randomUUID(),
         companyId,
-        userId: req.principal!.id,
+        userId,
+        url: body.url,
+        name: body.name?.trim() || remote.suggestedName,
+        totalBytes: remote.declaredBytes,
+      });
+
+      // Deliberately not awaited: a 300MB download would otherwise hold the
+      // request open for minutes with no way for the browser to show progress.
+      void storeMediaStream({
+        companyId,
+        userId,
         folderId: body.folderId ?? null,
-        originalName: body.name?.trim() || remote.suggestedName,
+        originalName: job.name,
         source: remote.body,
         maxBytes,
+        onProgress: (received) => updateProgress(job.id, received),
+      })
+        .then((created) => {
+          finishJob(job.id, created);
+          audit({
+            userId,
+            companyId,
+            action: 'media.import_url',
+            entityId: created.id as string,
+            ip: requestIp,
+            detail: { url: body.url.slice(0, 200) },
+          });
+          notifyCompany(companyId, { type: 'sync' });
+        })
+        .catch((err: unknown) => {
+          const message = err instanceof Error ? err.message : 'import failed';
+          failJob(job.id, message);
+          log.warn({ err, url: body.url.slice(0, 200) }, 'media import failed');
+        });
+
+      return reply.code(202).send({
+        jobId: job.id,
+        name: job.name,
+        totalBytes: job.totalBytes,
       });
-      audit({
-        userId: req.principal!.id,
-        companyId,
-        action: 'media.import_url',
-        entityId: created.id as string,
-        ip: req.ip,
-        detail: { url: body.url.slice(0, 200) },
+    });
+
+    /** Progress for an in-flight import (see lib/importJobs.ts). */
+    scope.get('/api/import-jobs/:id', async (req, reply) => {
+      const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+      const job = getJob(id);
+      if (!job) return reply.code(404).send({ error: 'not_found' });
+      // Scope it like anything else: the job belongs to a company, and only
+      // someone with access to that company may watch it.
+      if (!canAccessCompany(req.principal!, job.companyId, 'editor')) {
+        return reply.code(403).send({ error: 'forbidden' });
+      }
+      return reply.send({
+        id: job.id,
+        status: job.status,
+        name: job.name,
+        receivedBytes: job.receivedBytes,
+        totalBytes: job.totalBytes,
+        media: job.media ?? null,
+        error: job.error ?? null,
       });
-      notifyCompany(companyId, { type: 'sync' });
-      return reply.code(201).send(created);
     });
 
     scope.post('/api/companies/:companyId/media', async (req, reply) => {

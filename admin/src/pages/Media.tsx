@@ -30,11 +30,14 @@ export function Media({ company, canEdit }: { company: Company; canEdit: boolean
   const [currentFolder, setCurrentFolder] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [uploading, setUploading] = useState<{ name: string; percent: number } | null>(null);
-  const [importing, setImporting] = useState(false);
+  const [importing, setImporting] = useState<{ name: string; received: number; total: number | null } | null>(null);
   const [movingId, setMovingId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState<'name' | 'newest' | 'largest' | 'type'>('name');
   const fileInput = useRef<HTMLInputElement>(null);
+  // The import poll below outlives a render, so it needs to know if we are gone.
+  const mounted = useRef(true);
+  useEffect(() => () => { mounted.current = false; }, []);
 
   const load = useCallback(async () => {
     const [m, f] = await Promise.all([
@@ -97,18 +100,41 @@ export function Media({ company, canEdit }: { company: Company; canEdit: boolean
     );
     if (!url?.trim()) return;
     setError('');
-    // No progress events to hook: the server streams it, so the request simply
-    // stays open until it's done. Show that rather than leaving a dead button.
-    setImporting(true);
     try {
-      await api(`/api/companies/${company.id}/media/import`, {
-        body: { url: url.trim(), folderId: currentFolder },
-      });
+      // Returns as soon as the connection is open; the download continues
+      // server-side and we poll it, since the browser can't watch bytes it
+      // isn't carrying.
+      const started = await api<{ jobId: string; name: string; totalBytes: number | null }>(
+        `/api/companies/${company.id}/media/import`,
+        { body: { url: url.trim(), folderId: currentFolder } },
+      );
+      setImporting({ name: started.name, received: 0, total: started.totalBytes });
+
+      let done = false;
+      while (!done) {
+        await new Promise((r) => setTimeout(r, 1000));
+        // Navigating away mid-import would otherwise leave this polling for the
+        // life of the download and then setting state on a gone component.
+        if (!mounted.current) return;
+        const job = await api<{
+          status: 'downloading' | 'done' | 'error';
+          name: string;
+          receivedBytes: number;
+          totalBytes: number | null;
+          error: string | null;
+        }>(`/api/import-jobs/${started.jobId}`);
+        if (job.status === 'downloading') {
+          setImporting({ name: job.name, received: job.receivedBytes, total: job.totalBytes });
+        } else {
+          done = true;
+          if (job.status === 'error') setError(job.error ?? 'import failed');
+        }
+      }
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'import failed');
     } finally {
-      setImporting(false);
+      setImporting(null);
     }
   };
 
@@ -174,10 +200,10 @@ export function Media({ company, canEdit }: { company: Company; canEdit: boolean
               <input ref={fileInput} type="file" multiple style={{ display: 'none' }}
                 accept="image/jpeg,image/png,image/gif,image/bmp,image/webp,video/mp4,video/quicktime,video/webm,video/x-matroska,.mkv,.mov"
                 onChange={(e) => upload(e.target.files)} />
-              <button onClick={() => fileInput.current?.click()} disabled={uploading !== null || importing}>
+              <button onClick={() => fileInput.current?.click()} disabled={uploading !== null || importing !== null}>
                 ⬆ Upload files
               </button>
-              <button className="secondary" onClick={importFromUrl} disabled={uploading !== null || importing}
+              <button className="secondary" onClick={importFromUrl} disabled={uploading !== null || importing !== null}
                 title="The server downloads the file itself - use this for files too large to upload">
                 {importing ? "Downloading…" : "🔗 Import from link"}
               </button>
@@ -186,6 +212,27 @@ export function Media({ company, canEdit }: { company: Company; canEdit: boolean
                   <span className="muted">{uploading.name}</span>
                   <progress value={uploading.percent} max={100} style={{ width: 100 }} />
                   <span className="muted">{uploading.percent}%</span>
+                </div>
+              )}
+              {importing && (
+                <div className="row" style={{ minWidth: 260 }}>
+                  <span className="muted">{importing.name}</span>
+                  {/* A source that sent no Content-Length gives no total, so show
+                      an indeterminate bar and the bytes so far rather than a
+                      percentage that would be a guess. */}
+                  {importing.total ? (
+                    <>
+                      <progress value={importing.received} max={importing.total} style={{ width: 100 }} />
+                      <span className="muted">
+                        {Math.round((importing.received / importing.total) * 100)}% of {formatSize(importing.total)}
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <progress style={{ width: 100 }} />
+                      <span className="muted">{formatSize(importing.received)}</span>
+                    </>
+                  )}
                 </div>
               )}
             </>

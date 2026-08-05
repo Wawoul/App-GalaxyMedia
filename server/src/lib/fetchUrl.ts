@@ -15,31 +15,75 @@ import net from 'node:net';
  * so nothing legitimate needs a private address.
  */
 
-/** Blocked ranges: loopback, link-local (incl. cloud metadata), and RFC1918. */
+/**
+ * Expands an IPv6 address to its eight 16-bit groups, so embedded IPv4 can be
+ * recovered whatever notation was used. `::ffff:7f00:1` and `::ffff:127.0.0.1`
+ * are the same address; matching only the dotted spelling let the hex form
+ * straight through to loopback.
+ */
+function v6Groups(ip: string): number[] | null {
+  let text = ip.toLowerCase().split('%')[0]!; // drop any zone index
+  // A trailing dotted quad (::ffff:127.0.0.1) becomes two hex groups.
+  const dotted = text.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+  if (dotted) {
+    const octets = dotted[1]!.split('.').map(Number);
+    if (octets.some((o) => !Number.isInteger(o) || o < 0 || o > 255)) return null;
+    const hex = `${((octets[0]! << 8) | octets[1]!).toString(16)}:${((octets[2]! << 8) | octets[3]!).toString(16)}`;
+    text = text.slice(0, dotted.index) + hex;
+  }
+  const [head, tail] = text.split('::') as [string, string | undefined];
+  const parse = (part: string) => (part ? part.split(':').filter(Boolean).map((g) => parseInt(g, 16)) : []);
+  const left = parse(head);
+  const right = tail === undefined ? [] : parse(tail);
+  if (tail === undefined) return left.length === 8 ? left : null;
+  const groups = [...left, ...Array(8 - left.length - right.length).fill(0), ...right];
+  return groups.length === 8 && groups.every((g) => Number.isInteger(g) && g >= 0 && g <= 0xffff)
+    ? groups
+    : null;
+}
+
+/** Blocked IPv4 ranges: loopback, link-local (incl. cloud metadata), private, reserved. */
+function isBlockedV4(p: [number, number, number, number]): boolean {
+  return (
+    p[0] === 0 || // "this host"
+    p[0] === 10 || // RFC1918
+    p[0] === 127 || // loopback
+    (p[0] === 169 && p[1] === 254) || // link-local: AWS/GCP/Azure metadata is 169.254.169.254
+    (p[0] === 172 && p[1] >= 16 && p[1] <= 31) || // RFC1918
+    (p[0] === 192 && p[1] === 168) || // RFC1918
+    (p[0] === 192 && p[1] === 0 && p[2] === 0) || // IETF protocol assignments
+    (p[0] === 192 && p[1] === 0 && p[2] === 2) || // TEST-NET-1
+    (p[0] === 198 && (p[1] === 18 || p[1] === 19)) || // benchmarking
+    (p[0] === 198 && p[1] === 51 && p[2] === 100) || // TEST-NET-2
+    (p[0] === 203 && p[1] === 0 && p[2] === 113) || // TEST-NET-3
+    (p[0] === 100 && p[1] >= 64 && p[1] <= 127) || // CGNAT
+    p[0] >= 224 // multicast + reserved
+  );
+}
+
+/** Blocked ranges: loopback, link-local (incl. cloud metadata), and private space. */
 function isBlockedIp(ip: string): boolean {
   const type = net.isIP(ip);
   if (type === 4) {
-    const p = ip.split('.').map(Number) as [number, number, number, number];
-    return (
-      p[0] === 0 || // "this host"
-      p[0] === 10 || // RFC1918
-      p[0] === 127 || // loopback
-      (p[0] === 169 && p[1] === 254) || // link-local: AWS/GCP/Azure metadata lives at 169.254.169.254
-      (p[0] === 172 && p[1] >= 16 && p[1] <= 31) || // RFC1918
-      (p[0] === 192 && p[1] === 168) || // RFC1918
-      (p[0] === 100 && p[1] >= 64 && p[1] <= 127) || // CGNAT
-      p[0] >= 224 // multicast + reserved
-    );
+    return isBlockedV4(ip.split('.').map(Number) as [number, number, number, number]);
   }
   if (type === 6) {
-    const v6 = ip.toLowerCase();
-    // ::1 loopback, fc00::/7 unique-local, fe80::/10 link-local, :: unspecified.
-    if (v6 === '::1' || v6 === '::') return true;
-    if (/^f[cd]/.test(v6)) return true;
-    if (/^fe[89ab]/.test(v6)) return true;
-    // IPv4-mapped (::ffff:10.0.0.1) - re-check the embedded address.
-    const mapped = v6.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-    if (mapped) return isBlockedIp(mapped[1]!);
+    const g = v6Groups(ip);
+    if (!g) return true; // unparseable - refuse rather than guess
+    const [a, b, c, d, e, f, gg, h] = g as [number, number, number, number, number, number, number, number];
+    if (a === 0 && b === 0 && c === 0 && d === 0 && e === 0) {
+      // ::, ::1, ::ffff:x.x.x.x (mapped) and ::x.x.x.x (deprecated compatible)
+      if (f === 0 && gg === 0 && h <= 1) return true; // :: and ::1
+      if (f === 0xffff || f === 0) {
+        return isBlockedV4([gg >> 8, gg & 0xff, h >> 8, h & 0xff]);
+      }
+    }
+    // 64:ff9b::/96 NAT64 - carries an IPv4 destination in the low groups.
+    if (a === 0x64 && b === 0xff9b) return isBlockedV4([gg >> 8, gg & 0xff, h >> 8, h & 0xff]);
+    // 2002::/16 6to4 - the IPv4 address sits in the next two groups.
+    if (a === 0x2002) return isBlockedV4([b >> 8, b & 0xff, c >> 8, c & 0xff]);
+    if ((a & 0xfe00) === 0xfc00) return true; // fc00::/7 unique-local
+    if ((a & 0xffc0) === 0xfe80) return true; // fe80::/10 link-local
     return false;
   }
   return true; // not an IP at all
@@ -51,9 +95,13 @@ function isBlockedIp(ip: string): boolean {
  * both a public and a private address.
  */
 async function assertPublicHost(hostname: string): Promise<void> {
+  // URL.hostname keeps the brackets on an IPv6 literal, which net.isIP rejects.
+  const bare = hostname.startsWith('[') && hostname.endsWith(']')
+    ? hostname.slice(1, -1)
+    : hostname;
   // A bare IP in the URL skips DNS entirely.
-  if (net.isIP(hostname)) {
-    if (isBlockedIp(hostname)) throw badUrl('that address is not reachable from here');
+  if (net.isIP(bare)) {
+    if (isBlockedIp(bare)) throw badUrl('that address is not reachable from here');
     return;
   }
   const results = await lookup(hostname, { all: true }).catch(() => {

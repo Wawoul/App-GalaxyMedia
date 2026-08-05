@@ -8,6 +8,7 @@ import { mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { ZodError } from 'zod';
 import { startAlertLoop } from './alerts.js';
+import { sweepOrphanedUploads } from './lib/importJobs.js';
 import { config } from './config.js';
 import { migrate } from './db/migrate.js';
 import { authRoutes } from './routes/auth.js';
@@ -107,6 +108,8 @@ async function main(): Promise<void> {
   await migrate();
   const app = await buildServer();
   startAlertLoop(app.log);
+  // Collect partial writes left by a crash or restart mid-import.
+  void sweepOrphanedUploads(config.MEDIA_DIR, app.log);
   await app.listen({ host: config.HOST, port: config.PORT });
 }
 
