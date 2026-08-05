@@ -182,7 +182,14 @@ private class ZonePlayer(
 
     /** @return true if the page/stream was shown, false if it could not play. */
     private suspend fun showUrl(item: ManifestItem): Boolean {
-        val url = item.url ?: return false
+        val url = item.url ?: run {
+            // A url item with no url is representable in the manifest, and the
+            // cache filter lets url items through unchecked. Returning with no
+            // delay would spin the loop at full CPU on a single-item playlist -
+            // every other failure path has this floor.
+            delay(ERROR_RETRY_MS)
+            return false
+        }
         if (isStreamUrl(url)) return playStream(item, url)
         webView.loadUrl(url)
         webView.visibility = View.VISIBLE
@@ -212,27 +219,35 @@ private class ZonePlayer(
         imageView.visibility = View.GONE
         webView.visibility = View.GONE
         exoPlayer.volume = if (item.muted) 0f else 1f
-        exoPlayer.setMediaItem(MediaItem.fromUri(url))
-        exoPlayer.prepare()
-        exoPlayer.play()
-        // Run for the configured duration (default 1 hour - a single-item
-        // playlist just restarts it, so it is effectively continuous with a
-        // periodic self-heal), but abandon early if the stream dies. Waiting out
-        // the full hour on a dead origin would leave the screen black and, worse,
-        // bill it as an hour of playback.
-        var failed = false
-        val done = CompletableDeferred<Unit>()
+
+        // The deferred carries the outcome rather than a captured `var`: that
+        // local is written from ExoPlayer's thread and read from the coroutine,
+        // and on the timeout path nothing establishes a happens-before edge
+        // between them, so the read could see a stale value.
+        val failure = CompletableDeferred<Boolean>()
         val listener = object : Player.Listener {
             override fun onPlayerErrorChanged(error: androidx.media3.common.PlaybackException?) {
-                if (error != null) {
-                    failed = true
-                    done.complete(Unit)
-                }
+                if (error != null) failure.complete(true)
             }
         }
+        // Attach BEFORE prepare(). A dead origin can fail fast enough to latch
+        // the error first, and Media3 does not re-deliver an already-set error
+        // to a listener added afterwards - so the callback would never fire, the
+        // wait would run its full hour, and a black screen would be billed as an
+        // hour of playback. That is the exact failure this method exists to stop.
         exoPlayer.addListener(listener)
+        val failed: Boolean
         try {
-            withTimeoutOrNull(item.durationMs ?: 3_600_000L) { done.await() }
+            exoPlayer.setMediaItem(MediaItem.fromUri(url))
+            exoPlayer.prepare()
+            exoPlayer.play()
+            // Belt and braces for an error raised synchronously by prepare(),
+            // before the listener could be invoked at all.
+            exoPlayer.playerError?.let { failure.complete(true) }
+            // Run for the configured duration (default 1 hour - a single-item
+            // playlist just restarts it, so it is effectively continuous with a
+            // periodic self-heal), but abandon early if the stream dies.
+            failed = withTimeoutOrNull(item.durationMs ?: 3_600_000L) { failure.await() } ?: false
         } finally {
             exoPlayer.removeListener(listener)
             exoPlayer.stop()

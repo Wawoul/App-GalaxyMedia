@@ -171,7 +171,10 @@ export function systemRoutes(app: FastifyInstance): void {
         },
       });
       try {
-        await pipeline(part.file, tap, createWriteStream(tmp, { flags: 'w', mode: 0o640 }));
+        // 'wx' not 'w': the temp path is fixed, so two simultaneous uploads would
+        // otherwise interleave writes into one file and store a sha256 matching
+        // neither. Exclusive create makes the second fail cleanly instead.
+        await pipeline(part.file, tap, createWriteStream(tmp, { flags: 'wx', mode: 0o640 }));
         if (part.file.truncated) throw Object.assign(new Error('too_large'), { statusCode: 413 });
         // APKs are ZIP archives: enforce the magic bytes (PK\x03\x04).
         if (!(head[0] === 0x50 && head[1] === 0x4b && head[2] === 0x03 && head[3] === 0x04)) {

@@ -12,7 +12,15 @@ import { audit } from '../lib/audit.js';
 import { signDownload, verifyDownload } from '../lib/crypto.js';
 import { canAccessCompany } from '../lib/permissions.js';
 import { fetchRemoteFile } from '../lib/fetchUrl.js';
-import { createJob, failJob, finishJob, getJob, updateProgress } from '../lib/importJobs.js';
+import {
+  activeCountForCompany,
+  createJob,
+  failJob,
+  finishJob,
+  getJob,
+  MAX_ACTIVE_IMPORTS_PER_COMPANY,
+  updateProgress,
+} from '../lib/importJobs.js';
 import { extFromMime, sniffMediaType } from '../lib/uploads.js';
 import { requireUser } from '../plugins/auth.js';
 import { notifyCompany } from '../ws.js';
@@ -372,6 +380,14 @@ export function mediaRoutes(app: FastifyInstance): void {
       }
 
       const maxBytes = config.MAX_UPLOAD_MB * 1024 * 1024;
+      // Check the cap first: fetchRemoteFile below can spend a full connect
+      // timeout on a host the caller chose, so refusing only afterwards would
+      // let a loop of doomed requests tie up the process anyway.
+      if (activeCountForCompany(companyId) >= MAX_ACTIVE_IMPORTS_PER_COMPANY) {
+        return reply.code(429).send({
+          error: 'another import is already running for this company - wait for it to finish',
+        });
+      }
       // Open the connection before replying, so an unreachable link or a
       // blocked address is reported straight away rather than as a job that
       // fails a moment later.

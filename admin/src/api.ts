@@ -88,7 +88,11 @@ export async function api<T = unknown>(
     const data = (await res.json().catch(() => ({}))) as { error?: string };
     throw new ApiError(res.status, data.error ?? `HTTP ${res.status}`);
   }
-  return (await res.json()) as T;
+  // 204 and empty bodies are valid responses; res.json() would throw an opaque
+  // SyntaxError that surfaces to the user as a meaningless error banner.
+  if (res.status === 204) return undefined as T;
+  const text = await res.text();
+  return (text ? JSON.parse(text) : undefined) as T;
 }
 
 /** Restore a session from the stored refresh token on page load. */

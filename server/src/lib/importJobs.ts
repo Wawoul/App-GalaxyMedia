@@ -62,26 +62,62 @@ export async function sweepOrphanedUploads(
 ): Promise<void> {
   const { readdir, stat, unlink } = await import('node:fs/promises');
   const path = await import('node:path');
-  // Older than this can't belong to a live import (they'd still be growing).
-  const cutoff = Date.now() - STALE_MS;
-  const companies = await readdir(mediaDir, { withFileTypes: true }).catch(() => []);
-  for (const entry of companies) {
-    if (!entry.isDirectory()) continue;
-    const dir = path.join(mediaDir, entry.name);
+  // Runs at startup only, so by definition nothing is mid-write: this process
+  // has no imports yet, and any previous process is gone. An age check here
+  // would be unsound anyway - mtime tracks the last write, so a stalled import
+  // looks "old" while its file descriptor is still open, and unlinking it would
+  // make the eventual rename() fail with a baffling error after an hour.
+  const scanDir = async (dir: string, isOrphan: (name: string) => boolean) => {
     const files = await readdir(dir).catch(() => []);
     for (const name of files) {
-      if (!name.startsWith('.upload-')) continue;
+      if (!isOrphan(name)) continue;
       const file = path.join(dir, name);
       const info = await stat(file).catch(() => null);
-      if (!info || info.mtimeMs > cutoff) continue;
+      if (!info?.isFile()) continue;
       await unlink(file)
-        .then(() => log.warn({ file }, 'removed an orphaned partial upload'))
+        .then(() => log.warn({ file, bytes: info.size }, 'removed an orphaned partial upload'))
         .catch(() => {});
     }
+  };
+
+  const entries = await readdir(mediaDir, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const dir = path.join(mediaDir, entry.name);
+    // Media imports/uploads write `.upload-<uuid>`; the APK upload (routes/
+    // system.ts) writes `<name>.apk.upload`, which the prefix check missed
+    // entirely - so a failed APK upload leaked up to MAX_UPLOAD_MB forever.
+    await scanDir(dir, (name) => name.startsWith('.upload-') || name.endsWith('.upload'));
   }
 }
 
+/**
+ * Concurrent downloads allowed per company. Each one holds an open socket and a
+ * file being written, so without a cap an editor could start thousands in a
+ * loop and exhaust sockets, file descriptors and disk on a single-process
+ * server. Two at a time is ample for the actual use case (a tech adding media).
+ */
+export const MAX_ACTIVE_IMPORTS_PER_COMPANY = 2;
+
+export class TooManyImportsError extends Error {
+  statusCode = 429;
+  constructor() {
+    super('another import is already running for this company - wait for it to finish');
+  }
+}
+
+export function activeCountForCompany(companyId: string): number {
+  let count = 0;
+  for (const job of jobs.values()) {
+    if (job.companyId === companyId && job.status === 'downloading') count++;
+  }
+  return count;
+}
+
 export function createJob(job: Omit<ImportJob, 'status' | 'receivedBytes' | 'startedAt'>): ImportJob {
+  if (activeCountForCompany(job.companyId) >= MAX_ACTIVE_IMPORTS_PER_COMPANY) {
+    throw new TooManyImportsError();
+  }
   const created: ImportJob = {
     ...job,
     status: 'downloading',
