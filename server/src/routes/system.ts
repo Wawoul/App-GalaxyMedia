@@ -146,10 +146,13 @@ export function systemRoutes(app: FastifyInstance): void {
     scope.post('/api/system/apk', async (req, reply) => {
       const part = await req.file();
       if (!part) return reply.code(400).send({ error: 'no_file' });
+      // Optional: the version is read from the APK below. These remain only as
+      // a fallback for a build the parser can't read, and for older clients
+      // that still send them.
       const fields = z
         .object({
-          versionCode: z.coerce.number().int().positive(),
-          versionName: z.string().trim().min(1).max(50),
+          versionCode: z.coerce.number().int().positive().optional(),
+          versionName: z.string().trim().min(1).max(50).optional(),
         })
         .parse(
           Object.fromEntries(
@@ -193,15 +196,29 @@ export function systemRoutes(app: FastifyInstance): void {
       // than its own, so a mistyped number silently disables updates fleet-wide
       // with no error anywhere - which is exactly what happened in the field.
       const actual = readApkVersion(apkPath());
-      if (actual.versionCode !== null && actual.versionCode !== fields.versionCode) {
+      if (
+        actual.versionCode !== null &&
+        fields.versionCode !== undefined &&
+        actual.versionCode !== fields.versionCode
+      ) {
         req.log.warn(
           { typed: fields.versionCode, actual: actual.versionCode },
           'apk versionCode did not match the file; using the file',
         );
       }
+      const versionCode = actual.versionCode ?? fields.versionCode;
+      const versionName = actual.versionName ?? fields.versionName;
+      if (versionCode === undefined || versionName === undefined) {
+        // Neither readable nor supplied: refuse rather than store a release the
+        // players can never compare against.
+        await unlink(apkPath()).catch(() => {});
+        return reply.code(400).send({
+          error: 'could not read the version from that APK - is it a valid release build?',
+        });
+      }
       const release: ApkRelease = {
-        versionCode: actual.versionCode ?? fields.versionCode,
-        versionName: actual.versionName ?? fields.versionName,
+        versionCode,
+        versionName,
         sha256: hasher.digest('hex'),
         sizeBytes: size,
         uploadedAt: new Date().toISOString(),

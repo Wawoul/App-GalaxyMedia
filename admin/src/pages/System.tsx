@@ -46,8 +46,6 @@ export function System() {
   const [release, setRelease] = useState<ApkRelease | null>(null);
   const [hostStats, setHostStats] = useState<HostStats | null>(null);
   const [webPlayerEnabled, setWebPlayerEnabled] = useState<boolean | null>(null);
-  const [versionCode, setVersionCode] = useState('');
-  const [versionName, setVersionName] = useState('');
   const [progress, setProgress] = useState<number | null>(null);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
@@ -86,14 +84,12 @@ export function System() {
     setError('');
     setStatus('');
     try {
-      await uploadWithProgress('/api/system/apk', file, setProgress, {
-        versionCode,
-        versionName,
-      });
+      // No version fields: the server reads versionCode/versionName from the
+      // APK itself. They used to be typed here, and one wrong digit silently
+      // stopped every screen from being offered the update.
+      await uploadWithProgress('/api/system/apk', file, setProgress);
       setStatus('Release published. Nothing installs automatically - use "Install latest app update…" per screen on the Screens tab when a tech is on-site.');
       setRelease(await api<ApkRelease | null>('/api/system/apk'));
-      setVersionCode('');
-      setVersionName('');
       setFileName('');
       if (fileInput.current) fileInput.current.value = '';
     } catch (err) {
@@ -202,11 +198,10 @@ export function System() {
             Choose APK…
           </button>
           {fileName && <span className="muted">{fileName}</span>}
-          <input placeholder="Version code (e.g. 2)" value={versionCode} style={{ width: 150 }}
-            onChange={(e) => setVersionCode(e.target.value.replace(/\D/g, ''))} />
-          <input placeholder="Version name (e.g. 0.2.0)" value={versionName} style={{ width: 150 }}
-            onChange={(e) => setVersionName(e.target.value)} />
-          <button onClick={upload} disabled={!fileName || !versionCode || !versionName || progress !== null}>
+          {/* No version fields: the server reads them from the APK. They used to
+              be typed here, and one wrong digit silently stopped every screen
+              from ever being offered the update. */}
+          <button onClick={upload} disabled={!fileName || progress !== null}>
             Publish release
           </button>
           {progress !== null && (
