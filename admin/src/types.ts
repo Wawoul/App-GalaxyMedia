@@ -46,6 +46,7 @@ export interface Screen {
   last_crash_at: string | null;
   last_crash_message: string | null;
   local_ip: string | null;
+  media_error: string | null;
   orientation: 0 | 90 | 180 | 270;
   group_ids: string[];
   playlist_name: string | null;

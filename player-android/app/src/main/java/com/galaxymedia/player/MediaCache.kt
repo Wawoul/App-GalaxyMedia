@@ -23,6 +23,30 @@ class MediaCache(context: Context, private val http: OkHttpClient) {
     // prune() could delete what a newer, still-running call just verified.
     private val syncMutex = Mutex()
 
+    /**
+     * Why the last download failed, reported on the next heartbeat. A screen
+     * that cannot fetch its media plays nothing and looks idle from the
+     * dashboard; this is the difference between "diagnose it remotely" and
+     * "drive to site".
+     */
+    @Volatile
+    var lastError: String? = null
+        private set
+
+    fun clearLastError() {
+        lastError = null
+    }
+
+    /**
+     * Forget past failures so every item is retried immediately. Called when the
+     * manifest changes: the signed URLs are new, so a previous failure says
+     * nothing about whether this attempt will work, and an hour-long backoff
+     * would otherwise leave a fixed screen dark long after the fix.
+     */
+    fun resetFailures() {
+        failures.clear()
+    }
+
     /** Per-item download failure state, for exponential backoff. */
     private class Failure(var count: Int, var retryAt: Long)
     private val failures = mutableMapOf<String, Failure>()
@@ -62,6 +86,7 @@ class MediaCache(context: Context, private val http: OkHttpClient) {
         }
         val totalBytes = missing.sumOf { it.sizeBytes ?: 0L }.coerceAtLeast(1L)
         var doneBytes = 0L
+        var lastPercent = -1
         if (missing.isNotEmpty()) onProgress?.invoke(0)
 
         for (item in missing) {
@@ -80,6 +105,10 @@ class MediaCache(context: Context, private val http: OkHttpClient) {
             val needed = (item.sizeBytes ?: 0L) + 32L * 1024 * 1024
             if (dir.usableSpace in 1 until needed) {
                 noteFailure(mediaId)
+                // Say so. This path used to be entirely silent, so a screen that
+                // could never fit its media looked identical to a healthy one.
+                lastError = "${item.name ?: mediaId}: needs ${needed / 1024 / 1024}MB, " +
+                    "only ${dir.usableSpace / 1024 / 1024}MB free"
                 continue
             }
             runCatching {
@@ -93,7 +122,14 @@ class MediaCache(context: Context, private val http: OkHttpClient) {
                             if (read < 0) break
                             out.write(buffer, 0, read)
                             doneBytes += read
-                            onProgress?.invoke(((doneBytes * 100) / totalBytes).toInt().coerceIn(0, 100))
+                            // Per percent, not per chunk: a 77MB file is ~1200
+                            // chunks, and each callback hops to the main thread,
+                            // which is enough to risk an ANR on a cheap box.
+                            val percent = ((doneBytes * 100) / totalBytes).toInt().coerceIn(0, 100)
+                            if (percent != lastPercent) {
+                                lastPercent = percent
+                                onProgress?.invoke(percent)
+                            }
                         }
                     }
                 }
@@ -114,11 +150,17 @@ class MediaCache(context: Context, private val http: OkHttpClient) {
                 }
                 check(tmp.renameTo(target)) { "rename failed" }
                 failures.remove(mediaId)
-            }.onFailure {
+            }.onFailure { err ->
                 tmp.delete()
                 noteFailure(mediaId)
+                // Surface WHY. A download that keeps failing leaves the screen
+                // with nothing to play and looks identical, from the dashboard,
+                // to a screen that is simply idle - so without this the only way
+                // to diagnose it is physical access to the TV.
+                lastError = "${item.name ?: mediaId}: ${err.message ?: err::class.java.simpleName}"
             }
         }
+        if (missing.isEmpty()) lastError = null
         if (missing.isNotEmpty()) onProgress?.invoke(100)
         prune(items.mapNotNull { it.mediaId }.toSet())
     } }

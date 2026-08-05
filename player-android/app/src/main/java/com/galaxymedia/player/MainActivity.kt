@@ -1,6 +1,7 @@
 package com.galaxymedia.player
 
 import android.os.Bundle
+import android.os.SystemClock
 import android.text.InputType
 import android.view.Gravity
 import android.view.KeyEvent
@@ -29,6 +30,9 @@ private const val HEARTBEAT_INTERVAL_MS = 45_000L
 // Comfortably under Watchdog's staleness threshold so a healthy screen is never
 // misjudged, even if a tick is delayed.
 private const val ALIVE_MARK_INTERVAL_MS = 60_000L
+// If the sync loop hasn't come round in this long it is wedged, not merely slow
+// (a pass is ~45s), so stop vouching for it and let the watchdog act.
+private const val LOOP_STALL_MS = 10 * 60_000L
 private const val POLL_FALLBACK_MS = 60_000L
 private const val CONNECT_RETRY_DELAY_MS = 10_000L
 private const val CONNECT_RETRY_SLOW_MS = 60_000L // background cadence after the fast attempts are exhausted
@@ -66,6 +70,8 @@ class MainActivity : AppCompatActivity() {
     private var activePlaylistId: String? = null
     private val playsBuffer = ArrayDeque<PlayRecord>() // proof-of-play, flushed with heartbeats
     private val syncMutex = kotlinx.coroutines.sync.Mutex() // one syncNow at a time
+    // Advanced on every pass of the sync loop; the liveness mark is gated on it.
+    @Volatile private var lastLoopAt = SystemClock.elapsedRealtime()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -80,17 +86,24 @@ class MainActivity : AppCompatActivity() {
         // loop only runs once paired, so a screen sitting on the pairing code
         // (or the server-URL prompt) would otherwise go stale and be relaunched
         // out from under whoever is standing there setting it up.
+        // Marks liveness only while the screen is still doing real work. The
+        // sync loop sets lastLoopAt on every pass; if that stops advancing the
+        // app is wedged even though the Activity is technically alive, and the
+        // watchdog should be allowed to relaunch it. Before pairing there is no
+        // sync loop, so the Activity itself counts.
         aliveJob = lifecycleScope.launch {
             while (true) {
                 delay(ALIVE_MARK_INTERVAL_MS)
-                Watchdog.markAlive(this@MainActivity)
+                val loopHealthy = syncJob == null ||
+                    SystemClock.elapsedRealtime() - lastLoopAt < LOOP_STALL_MS
+                if (loopHealthy) Watchdog.markAlive(this@MainActivity)
             }
         }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         prefs = Prefs(this)
         api = ApiClient(prefs)
-        cache = MediaCache(this, api.http)
+        cache = MediaCache(this, api.downloadHttp)
         updater = UpdateManager(this, api, prefs)
         telemetry = Telemetry(this)
 
@@ -394,6 +407,7 @@ class MainActivity : AppCompatActivity() {
         syncJob = lifecycleScope.launch {
             var lastSync = 0L
             while (true) {
+                lastLoopAt = SystemClock.elapsedRealtime()
                 try {
                     // Periodic full sync as a fallback when WS is blocked.
                     if (System.currentTimeMillis() - lastSync > POLL_FALLBACK_MS) {
@@ -408,7 +422,7 @@ class MainActivity : AppCompatActivity() {
                     val lastCrash = CrashReporter.pending(this@MainActivity)
                     api.heartbeat(
                         BuildConfig.VERSION_NAME, currentItem, cache.freeSpaceMb(), plays,
-                        telemetry.sample(), lastCrash,
+                        telemetry.sample(), lastCrash, cache.lastError,
                     )
                     // Delivered: drop exactly what we sent, matched by identity rather
                     // than by count. The buffer can overflow (and shed its oldest
@@ -441,6 +455,10 @@ class MainActivity : AppCompatActivity() {
 
     private suspend fun syncNowLocked() {
         val manifest = api.fetchManifest()
+        // A fresh manifest carries freshly signed URLs, so any past download
+        // failure is stale information. Without this, an item that failed a few
+        // times sits in an hour-long backoff even after the cause is fixed.
+        cache.resetFailures()
         var lastReported = -100
         // Cache everything across ALL schedules so upcoming dayparts are ready (SPEC §6).
         cache.syncAll(Schedule.allItems(manifest)) { percent ->

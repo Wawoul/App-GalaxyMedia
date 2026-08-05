@@ -51,6 +51,8 @@ data class HeartbeatPayload(
     // Last uncaught exception since the previous confirmed report, if any (CrashReporter).
     val lastCrashAt: String? = null,
     val lastCrashMessage: String? = null,
+    // Why media could not be downloaded, if it could not.
+    val mediaError: String? = null,
 )
 
 @Serializable

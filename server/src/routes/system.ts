@@ -185,17 +185,20 @@ export function systemRoutes(app: FastifyInstance): void {
         if (!(head[0] === 0x50 && head[1] === 0x4b && head[2] === 0x03 && head[3] === 0x04)) {
           throw Object.assign(new Error('not_an_apk'), { statusCode: 415 });
         }
-        await rename(tmp, apkPath());
       } catch (err) {
         await unlink(tmp).catch(() => {});
         throw err;
       }
 
-      // Read the version out of the APK and prefer it over what was typed. The
-      // player only offers an update when the server's versionCode is HIGHER
+      // Read the version from the TEMP file, before it becomes the live release.
+      // Doing this after the rename meant a rejected upload had already replaced
+      // a working APK, leaving every screen offered a release the server had
+      // just refused to record.
+      //
+      // The player only offers an update when the server's versionCode is HIGHER
       // than its own, so a mistyped number silently disables updates fleet-wide
       // with no error anywhere - which is exactly what happened in the field.
-      const actual = readApkVersion(apkPath());
+      const actual = readApkVersion(tmp);
       if (
         actual.versionCode !== null &&
         fields.versionCode !== undefined &&
@@ -210,12 +213,15 @@ export function systemRoutes(app: FastifyInstance): void {
       const versionName = actual.versionName ?? fields.versionName;
       if (versionCode === undefined || versionName === undefined) {
         // Neither readable nor supplied: refuse rather than store a release the
-        // players can never compare against.
-        await unlink(apkPath()).catch(() => {});
+        // players can never compare against. The previous release stays live,
+        // because the rename below has not happened yet.
+        await unlink(tmp).catch(() => {});
         return reply.code(400).send({
           error: 'could not read the version from that APK - is it a valid release build?',
         });
       }
+      // Everything validated - now it can replace the live release.
+      await rename(tmp, apkPath());
       const release: ApkRelease = {
         versionCode,
         versionName,

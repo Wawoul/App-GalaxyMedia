@@ -11,9 +11,30 @@ import okhttp3.WebSocketListener
 import java.util.concurrent.TimeUnit
 
 class ApiClient(private val prefs: Prefs) {
+    /** Short timeouts: these are small JSON calls that should fail fast. */
     val http: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
+        .build()
+
+    /**
+     * Separate client for media downloads. The API client's 30s readTimeout is
+     * right for a JSON call and wrong for a 300MB video: on a slow or congested
+     * link a large transfer can easily stall longer than that between reads, and
+     * OkHttp then aborts it. The download restarts from zero on the next sync,
+     * fails the same way, and the screen never gets its media - which is exactly
+     * what stranded a screen in the field, with the server logging a healthy
+     * 200 while the client walked away mid-body.
+     *
+     * No callTimeout at all (an unbounded total is intended here), a generous
+     * read gap, and retryOnConnectionFailure so a dropped connection is retried
+     * rather than surfacing as a failure.
+     */
+    val downloadHttp: OkHttpClient = http.newBuilder()
+        .readTimeout(5, TimeUnit.MINUTES)
+        .writeTimeout(5, TimeUnit.MINUTES)
+        .callTimeout(0, TimeUnit.MILLISECONDS)
+        .retryOnConnectionFailure(true)
         .build()
 
     private val jsonType = "application/json".toMediaType()
@@ -82,6 +103,7 @@ class ApiClient(private val prefs: Prefs) {
         plays: List<PlayRecord> = emptyList(),
         telemetry: TelemetrySample? = null,
         lastCrash: LastCrash? = null,
+        mediaError: String? = null,
     ) = withContext(Dispatchers.IO) {
         val payload = json.encodeToString(
             HeartbeatPayload.serializer(),
@@ -96,6 +118,7 @@ class ApiClient(private val prefs: Prefs) {
                 localIp = telemetry?.localIp,
                 lastCrashAt = lastCrash?.at,
                 lastCrashMessage = lastCrash?.message,
+                mediaError = mediaError,
             ),
         )
         val request = authed(

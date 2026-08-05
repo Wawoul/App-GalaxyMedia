@@ -35,6 +35,9 @@ function healthRows(s: Screen): [string, string][] {
     // Two addresses, because they differ whenever the screen sits behind a
     // router: local_ip is what the device reports for itself (the one to adb
     // into), s.ip is whichever hop reached the server.
+    // Shown before the IPs: a screen that can't fetch its media plays nothing
+    // and otherwise looks identical to an idle one.
+    ['Media download', s.media_error ? `FAILING - ${s.media_error}` : 'ok'],
     ['IP address (device)', s.local_ip ?? '- (needs player 1.3.8+)'],
     ['Seen by server as', s.ip ?? '-'],
     ['App version', s.app_version ?? '-'],

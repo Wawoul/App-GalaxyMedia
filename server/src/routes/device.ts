@@ -340,6 +340,8 @@ export function deviceRoutes(app: FastifyInstance): void {
           // Last uncaught exception since the previous confirmed report, if any.
           lastCrashAt: z.string().datetime().nullish(),
           lastCrashMessage: z.string().max(500).nullish(),
+          // Why media could not be downloaded, if it could not.
+          mediaError: z.string().max(500).nullish(),
         })
         .parse(req.body ?? {});
       await query(
@@ -350,7 +352,11 @@ export function deviceRoutes(app: FastifyInstance): void {
            wifi_rssi = coalesce($10, wifi_rssi), uptime_s = coalesce($11, uptime_s),
            last_crash_at = coalesce($12, last_crash_at),
            last_crash_message = coalesce($13, last_crash_message),
-           local_ip = coalesce($14, local_ip)
+           local_ip = coalesce($14, local_ip),
+           -- Set directly, not coalesced: a null means the download succeeded
+           -- and the previous error must clear, or a fixed screen shows a
+           -- stale failure forever.
+           media_error = $15
          WHERE id = $1`,
         [
           req.screenId,
@@ -367,6 +373,7 @@ export function deviceRoutes(app: FastifyInstance): void {
           body.lastCrashAt ?? null,
           body.lastCrashMessage ?? null,
           body.localIp ?? null,
+          body.mediaError ?? null,
         ],
       );
       if (body.plays.length > 0) {

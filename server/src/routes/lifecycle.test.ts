@@ -230,6 +230,77 @@ describeDb('dashboard now-playing matches schedule resolution', () => {
   });
 });
 
+describeDb('heartbeat media error reporting', () => {
+  let app: FastifyInstance;
+  let query: (text: string, params?: unknown[]) => Promise<{ rows: Record<string, string>[] }>;
+  let token = '';
+  let screenId = '';
+
+  beforeAll(async () => {
+    process.env.DATABASE_URL = TEST_DB;
+    const { migrate } = await import('../db/migrate.js');
+    const pool = await import('../db/pool.js');
+    const { buildServer } = await import('../index.js');
+    const { signDeviceToken } = await import('../lib/tokens.js');
+    query = pool.query as typeof query;
+
+    await migrate();
+    await query('DELETE FROM screens');
+    await query('DELETE FROM companies');
+    const c = await query('INSERT INTO companies (name) VALUES ($1) RETURNING id', ['HbCo']);
+    const jti = crypto.randomUUID();
+    const s = await query(
+      `INSERT INTO screens (company_id, name, timezone, device_token_jti)
+       VALUES ($1, 'HbScreen', 'Europe/London', $2) RETURNING id`,
+      [c.rows[0]!.id, jti],
+    );
+    screenId = s.rows[0]!.id;
+    token = signDeviceToken(screenId, jti);
+
+    app = await buildServer();
+    await app.ready();
+  }, 60_000);
+
+  afterAll(async () => {
+    await app?.close();
+  });
+
+  const beat = (body: Record<string, unknown>) =>
+    app.inject({
+      method: 'POST',
+      url: '/api/device/heartbeat',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { appVersion: '1.4.3', storageFreeMb: 1000, ...body },
+    });
+
+  it('stores a reported media download failure', async () => {
+    const res = await beat({ mediaError: 'clip.mp4: timeout' });
+    expect(res.statusCode).toBe(200);
+    const row = await query('SELECT media_error FROM screens WHERE id = $1', [screenId]);
+    expect(row.rows[0]!.media_error).toBe('clip.mp4: timeout');
+  });
+
+  it('clears it once the download succeeds', async () => {
+    // Set directly rather than coalesced, so a healthy heartbeat wipes a stale
+    // failure - otherwise a fixed screen shows an error forever.
+    const res = await beat({ mediaError: null });
+    expect(res.statusCode).toBe(200);
+    const row = await query('SELECT media_error FROM screens WHERE id = $1', [screenId]);
+    expect(row.rows[0]!.media_error).toBeNull();
+  });
+
+  it('still records the other telemetry alongside it', async () => {
+    await beat({ mediaError: 'x: fail', localIp: '10.1.2.3', ramFreeMb: 256 });
+    const row = await query(
+      'SELECT media_error, local_ip, ram_free_mb FROM screens WHERE id = $1',
+      [screenId],
+    );
+    expect(row.rows[0]!.media_error).toBe('x: fail');
+    expect(row.rows[0]!.local_ip).toBe('10.1.2.3');
+    expect(Number(row.rows[0]!.ram_free_mb)).toBe(256);
+  });
+});
+
 describeDb('config import', () => {
   let app: FastifyInstance;
   let query: (text: string, params?: unknown[]) => Promise<{ rows: Record<string, string>[] }>;
