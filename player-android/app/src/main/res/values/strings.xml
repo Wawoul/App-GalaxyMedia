@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Galaxy Media Player</string>
+    <!-- Matches the banner artwork. Kept short so TV launchers don't truncate it,
+         and so it's the same phrase a tech says on a support call. -->
+    <string name="app_name">Galaxy Player</string>
 </resources>

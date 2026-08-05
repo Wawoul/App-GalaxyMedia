@@ -115,15 +115,22 @@ class MainActivity : AppCompatActivity() {
                 Gravity.BOTTOM or Gravity.END,
             ).apply { setMargins(0, 0, 32, 32) }
         }
-        engine = PlaybackEngine(this, root, cache, lifecycleScope) { item ->
-            currentItem = item
-            if (item != null) {
-                synchronized(playsBuffer) {
-                    playsBuffer.addLast(PlayRecord(item, java.time.Instant.now().toString()))
-                    while (playsBuffer.size > 400) playsBuffer.removeFirst()
+        engine = PlaybackEngine(
+            this, root, cache, lifecycleScope,
+            // Fires when an item goes on screen - drives the dashboard's
+            // "now playing", so it must update at the START of an item.
+            onItemChanged = { item -> currentItem = item },
+            // Fires once an item has actually played through - this is the
+            // proof-of-play record, so a file that failed to decode is excluded.
+            onItemPlayed = { item ->
+                if (item != null) {
+                    synchronized(playsBuffer) {
+                        playsBuffer.addLast(PlayRecord(item, java.time.Instant.now().toString()))
+                        while (playsBuffer.size > 400) playsBuffer.removeFirst()
+                    }
                 }
-            }
-        }
+            },
+        )
         // Visible only while pairing (setup + connect-retry + waiting for a code claim);
         // lets the user bail out and fix the server URL instead of being stuck.
         cancelButton = Button(this).apply {

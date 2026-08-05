@@ -93,6 +93,7 @@ class ApiClient(private val prefs: Prefs) {
                 cpuPct = telemetry?.cpuPct,
                 wifiRssi = telemetry?.wifiRssi,
                 uptimeS = telemetry?.uptimeS,
+                localIp = telemetry?.localIp,
                 lastCrashAt = lastCrash?.at,
                 lastCrashMessage = lastCrash?.message,
             ),

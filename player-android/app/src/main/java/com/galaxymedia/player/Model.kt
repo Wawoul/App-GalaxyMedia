@@ -46,6 +46,8 @@ data class HeartbeatPayload(
     val cpuPct: Int? = null,
     val wifiRssi: Int? = null,
     val uptimeS: Long? = null,
+    // The device's own LAN address; the server can only see the last hop.
+    val localIp: String? = null,
     // Last uncaught exception since the previous confirmed report, if any (CrashReporter).
     val lastCrashAt: String? = null,
     val lastCrashMessage: String? = null,

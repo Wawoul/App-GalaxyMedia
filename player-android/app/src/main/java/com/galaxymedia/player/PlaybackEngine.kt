@@ -44,6 +44,7 @@ private class ZonePlayer(
     private val cache: MediaCache,
     private val scope: CoroutineScope,
     private val onItemChanged: ((String?) -> Unit)?,
+    private val onItemPlayed: ((String?) -> Unit)?,
 ) {
     private val match = FrameLayout.LayoutParams(
         FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT,
@@ -96,18 +97,21 @@ private class ZonePlayer(
             while (true) {
                 val item = items[index % items.size]
                 val label = item.name ?: item.url ?: item.mediaId
+                // Two different questions, so two callbacks. "What is on screen
+                // right now" must be answered when the item STARTS, or the
+                // dashboard reads blank for the whole of a video. "What actually
+                // played" is proof-of-play, and a file ExoPlayer rejected must
+                // not be billed as a play.
+                onItemChanged?.invoke(label)
                 when (item.type) {
-                    // Report only what actually played: onItemChanged feeds the
-                    // proof-of-play buffer, and announcing before playback meant
-                    // a corrupt video still billed as a full play.
-                    "video" -> if (playVideo(item)) onItemChanged?.invoke(label)
+                    "video" -> if (playVideo(item)) onItemPlayed?.invoke(label)
                     "image" -> {
-                        onItemChanged?.invoke(label)
                         showImage(item)
+                        onItemPlayed?.invoke(label)
                     }
                     "url" -> {
-                        onItemChanged?.invoke(label)
                         showUrl(item)
+                        onItemPlayed?.invoke(label)
                     }
                     else -> delay(1_000)
                 }
@@ -270,6 +274,7 @@ class PlaybackEngine(
     private val cache: MediaCache,
     private val scope: CoroutineScope,
     private val onItemChanged: (String?) -> Unit,
+    private val onItemPlayed: (String?) -> Unit,
 ) {
     private val zonePlayers = mutableListOf<ZonePlayer>()
     private val zoneViews = mutableListOf<View>()
@@ -305,7 +310,7 @@ class PlaybackEngine(
             onItemChanged(null)
             return false
         }
-        val zone = ZonePlayer(context, addZoneContainer(0.0, 0.0, 1.0, 1.0), cache, scope, onItemChanged)
+        val zone = ZonePlayer(context, addZoneContainer(0.0, 0.0, 1.0, 1.0), cache, scope, onItemChanged, onItemPlayed)
         zonePlayers.add(zone)
         val playing = zone.play(playlist)
         if (!playing) clear()
@@ -328,9 +333,15 @@ class PlaybackEngine(
                 anyPlaying = true
             } else {
                 val container = addZoneContainer(zone.x, zone.y, zone.w, zone.h)
-                // Only the main zone reports "now playing" to the dashboard.
-                val reporter = if (zone.key == "main") onItemChanged else null
-                val player = ZonePlayer(context, container, cache, scope, reporter)
+                // Only the main zone reports "now playing" to the dashboard, and
+                // only it contributes proof-of-play - otherwise a four-zone layout
+                // would bill four simultaneous plays for one screen.
+                val isMain = zone.key == "main"
+                val player = ZonePlayer(
+                    context, container, cache, scope,
+                    if (isMain) onItemChanged else null,
+                    if (isMain) onItemPlayed else null,
+                )
                 zonePlayers.add(player)
                 if (player.play(zone.playlist)) anyPlaying = true
             }

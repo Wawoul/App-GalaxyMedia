@@ -330,6 +330,8 @@ export function deviceRoutes(app: FastifyInstance): void {
           cpuPct: z.number().int().min(0).max(100).nullish(),
           wifiRssi: z.number().int().min(-127).max(0).nullish(),
           uptimeS: z.number().int().nonnegative().nullish(),
+          // Reported by the device, unlike `ip` which is whatever hop reached us.
+          localIp: z.string().max(45).nullish(), // 45 = longest IPv6 text form
           // Proof-of-play batch: items shown since the last successful heartbeat.
           plays: z
             .array(z.object({ name: z.string().min(1).max(300), at: z.string().datetime() }))
@@ -347,7 +349,8 @@ export function deviceRoutes(app: FastifyInstance): void {
            ram_total_mb = coalesce($8, ram_total_mb), cpu_pct = coalesce($9, cpu_pct),
            wifi_rssi = coalesce($10, wifi_rssi), uptime_s = coalesce($11, uptime_s),
            last_crash_at = coalesce($12, last_crash_at),
-           last_crash_message = coalesce($13, last_crash_message)
+           last_crash_message = coalesce($13, last_crash_message),
+           local_ip = coalesce($14, local_ip)
          WHERE id = $1`,
         [
           req.screenId,
@@ -363,6 +366,7 @@ export function deviceRoutes(app: FastifyInstance): void {
           body.uptimeS ?? null,
           body.lastCrashAt ?? null,
           body.lastCrashMessage ?? null,
+          body.localIp ?? null,
         ],
       );
       if (body.plays.length > 0) {

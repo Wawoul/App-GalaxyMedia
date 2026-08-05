@@ -32,7 +32,11 @@ function healthRows(s: Screen): [string, string][] {
     ['Storage free', s.storage_free_mb != null ? `${(s.storage_free_mb / 1024).toFixed(1)} GB` : '-'],
     ['Uptime', s.uptime_s != null ? formatUptime(s.uptime_s) : '-'],
     ['Rotation', s.orientation ? `${s.orientation}°` : 'landscape (0°)'],
-    ['IP address', s.ip ?? '-'],
+    // Two addresses, because they differ whenever the screen sits behind a
+    // router: local_ip is what the device reports for itself (the one to adb
+    // into), s.ip is whichever hop reached the server.
+    ['IP address (device)', s.local_ip ?? '- (needs player 1.3.5+)'],
+    ['Seen by server as', s.ip ?? '-'],
     ['App version', s.app_version ?? '-'],
     ['Last seen', s.last_seen_at ? new Date(s.last_seen_at).toLocaleString() : 'never'],
     [

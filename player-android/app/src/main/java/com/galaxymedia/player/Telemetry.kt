@@ -21,6 +21,7 @@ data class TelemetrySample(
     val cpuPct: Int?,
     val wifiRssi: Int?,
     val uptimeS: Long,
+    val localIp: String?,
 )
 
 class Telemetry(private val context: Context) {
@@ -39,8 +40,26 @@ class Telemetry(private val context: Context) {
             cpuPct = cpuPct(),
             wifiRssi = wifiRssi(),
             uptimeS = SystemClock.elapsedRealtime() / 1000,
+            localIp = localIp(),
         )
     }
+
+    /**
+     * The screen's own address on its LAN. The server can only see whatever last
+     * hop connected to it, which behind a router/NAT is that router - so a TV on
+     * a separate subnet showed the gateway's address in its health panel, which
+     * is useless for finding the actual device. This is the number a tech needs
+     * to adb into it.
+     */
+    private fun localIp(): String? = runCatching {
+        java.net.NetworkInterface.getNetworkInterfaces()
+            ?.asSequence()
+            ?.filter { it.isUp && !it.isLoopback }
+            ?.flatMap { it.inetAddresses.asSequence() }
+            // IPv4 only: a link-local IPv6 address is not what anyone wants here.
+            ?.firstOrNull { !it.isLoopbackAddress && it is java.net.Inet4Address }
+            ?.hostAddress
+    }.getOrNull()
 
     private fun batteryPct(): Int? = runCatching {
         // Many cheap Android TV boxes are reflashed phone/tablet vendor images
