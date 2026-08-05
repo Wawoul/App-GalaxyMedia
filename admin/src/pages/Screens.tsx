@@ -35,7 +35,7 @@ function healthRows(s: Screen): [string, string][] {
     // Two addresses, because they differ whenever the screen sits behind a
     // router: local_ip is what the device reports for itself (the one to adb
     // into), s.ip is whichever hop reached the server.
-    ['IP address (device)', s.local_ip ?? '- (needs player 1.3.5+)'],
+    ['IP address (device)', s.local_ip ?? '- (needs player 1.3.8+)'],
     ['Seen by server as', s.ip ?? '-'],
     ['App version', s.app_version ?? '-'],
     ['Last seen', s.last_seen_at ? new Date(s.last_seen_at).toLocaleString() : 'never'],

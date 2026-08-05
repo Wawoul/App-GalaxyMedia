@@ -16,6 +16,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -25,6 +26,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
 
 private const val DEFAULT_IMAGE_MS = 10_000L
@@ -103,18 +105,16 @@ private class ZonePlayer(
                 // played" is proof-of-play, and a file ExoPlayer rejected must
                 // not be billed as a play.
                 onItemChanged?.invoke(label)
-                when (item.type) {
-                    "video" -> if (playVideo(item)) onItemPlayed?.invoke(label)
-                    "image" -> {
-                        showImage(item)
-                        onItemPlayed?.invoke(label)
+                val played = when (item.type) {
+                    "video" -> playVideo(item)
+                    "image" -> showImage(item)
+                    "url" -> showUrl(item)
+                    else -> {
+                        delay(1_000)
+                        false
                     }
-                    "url" -> {
-                        showUrl(item)
-                        onItemPlayed?.invoke(label)
-                    }
-                    else -> delay(1_000)
                 }
+                if (played) onItemPlayed?.invoke(label)
                 index++
             }
         }
@@ -128,7 +128,8 @@ private class ZonePlayer(
         exoPlayer.stop()
     }
 
-    private suspend fun showImage(item: ManifestItem) {
+    /** @return true if the image was decoded and shown, false if the file is unusable. */
+    private suspend fun showImage(item: ManifestItem): Boolean {
         // Stop the previous frame's animated GIF/WebP before swapping - the
         // playlist loop swaps images every ~10s by default, and each unstopped
         // AnimatedImageDrawable keeps decoding in the background otherwise,
@@ -157,7 +158,14 @@ private class ZonePlayer(
             // blocks the UI long enough to risk an ANR.
             val bitmap = withContext(Dispatchers.IO) {
                 runCatching { BitmapFactory.decodeFile(file.absolutePath) }.getOrNull()
-            } ?: return
+            }
+            if (bitmap == null) {
+                // Undecodable file. Returning early here used to skip the delay
+                // below as well, so a zone whose only item is a corrupt image
+                // span the loop at full CPU - and it was still billed as a play.
+                delay(ERROR_RETRY_MS)
+                return false
+            }
             // Recycle the outgoing bitmap: on API 24-27 nothing else frees it, and
             // the playlist swaps images every few seconds for weeks at a time.
             val previous = (imageView.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
@@ -169,10 +177,12 @@ private class ZonePlayer(
         webView.visibility = View.GONE
         exoPlayer.stop()
         delay(item.durationMs ?: DEFAULT_IMAGE_MS)
+        return true
     }
 
-    private suspend fun showUrl(item: ManifestItem) {
-        val url = item.url ?: return
+    /** @return true if the page/stream was shown, false if it could not play. */
+    private suspend fun showUrl(item: ManifestItem): Boolean {
+        val url = item.url ?: return false
         if (isStreamUrl(url)) return playStream(item, url)
         webView.loadUrl(url)
         webView.visibility = View.VISIBLE
@@ -181,6 +191,7 @@ private class ZonePlayer(
         exoPlayer.stop()
         delay(item.durationMs ?: DEFAULT_URL_MS)
         webView.loadUrl("about:blank")
+        return true
     }
 
     private fun isStreamUrl(url: String): Boolean {
@@ -192,8 +203,11 @@ private class ZonePlayer(
      * Live stream (HLS/DASH) straight off the network - can't be cached, so it
      * needs connectivity. The periodic restart at the end of each duration also
      * recovers from stalled streams. Skipped quickly when unreachable.
+     *
+     * @return true if the stream played, false if it never connected - a dead
+     * origin must not be billed as an hour of playback while the screen is black.
      */
-    private suspend fun playStream(item: ManifestItem, url: String) {
+    private suspend fun playStream(item: ManifestItem, url: String): Boolean {
         playerView.visibility = View.VISIBLE
         imageView.visibility = View.GONE
         webView.visibility = View.GONE
@@ -201,10 +215,30 @@ private class ZonePlayer(
         exoPlayer.setMediaItem(MediaItem.fromUri(url))
         exoPlayer.prepare()
         exoPlayer.play()
-        // Default 1 hour; a single-item playlist just restarts it, so it is
-        // effectively continuous (with a periodic self-heal).
-        delay(item.durationMs ?: 3_600_000L)
-        exoPlayer.stop()
+        // Run for the configured duration (default 1 hour - a single-item
+        // playlist just restarts it, so it is effectively continuous with a
+        // periodic self-heal), but abandon early if the stream dies. Waiting out
+        // the full hour on a dead origin would leave the screen black and, worse,
+        // bill it as an hour of playback.
+        var failed = false
+        val done = CompletableDeferred<Unit>()
+        val listener = object : Player.Listener {
+            override fun onPlayerErrorChanged(error: androidx.media3.common.PlaybackException?) {
+                if (error != null) {
+                    failed = true
+                    done.complete(Unit)
+                }
+            }
+        }
+        exoPlayer.addListener(listener)
+        try {
+            withTimeoutOrNull(item.durationMs ?: 3_600_000L) { done.await() }
+        } finally {
+            exoPlayer.removeListener(listener)
+            exoPlayer.stop()
+        }
+        if (failed) delay(ERROR_RETRY_MS)
+        return !failed
     }
 
     /** @return true if the item played, false if ExoPlayer rejected it. */
