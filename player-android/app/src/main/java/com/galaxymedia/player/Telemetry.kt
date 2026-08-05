@@ -78,7 +78,26 @@ class Telemetry(private val context: Context) {
         // HALs that (wrongly) report EXTRA_PRESENT=true on reflashed TV boxes.
         if (context.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)) return false
         val sticky = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-        return sticky?.getBooleanExtra(BatteryManager.EXTRA_PRESENT, false) ?: false
+            ?: return false
+        if (!sticky.getBooleanExtra(BatteryManager.EXTRA_PRESENT, false)) return false
+
+        // The leanback check misses a box running a reflashed phone/tablet image,
+        // which is where the stub HAL lives - it claims a battery is present and
+        // returns a fixed value forever (a screen in the field sat at exactly 50%
+        // for a week while mains-powered). A real battery on a device that is
+        // always plugged in reads 100 and charges; one that never moves off a
+        // mid-range value is not a battery.
+        val plugged = sticky.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0
+        val level = sticky.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+        val scale = sticky.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+        if (level < 0 || scale <= 0) return false
+        val pct = level * 100 / scale
+        // Permanently plugged in but not full and not charging: a stub.
+        val status = sticky.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
+        val charging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
+            status == BatteryManager.BATTERY_STATUS_FULL
+        if (plugged && !charging && pct < 100) return false
+        return true
     }
 
     private fun memory(): Pair<Int, Int>? = runCatching {
