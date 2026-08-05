@@ -24,16 +24,18 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlin.coroutines.resume
 
 private const val DEFAULT_IMAGE_MS = 10_000L
 private const val DEFAULT_URL_MS = 30_000L
 // Floor between attempts when an item fails to play, so an undecodable file
 // can't spin the playlist loop at full CPU.
 private const val ERROR_RETRY_MS = 5_000L
+// Ceiling for a video with no declared duration. Longer than any realistic
+// signage clip, but finite: without it a decoder that stalls without raising an
+// error strands the screen on one frame indefinitely.
+private const val MAX_VIDEO_MS = 30 * 60_000L
 
 /**
  * One rectangular region playing its own playlist loop (images, videos, URLs).
@@ -262,15 +264,27 @@ private class ZonePlayer(
         imageView.visibility = View.GONE
         webView.visibility = View.GONE
         exoPlayer.volume = if (item.muted) 0f else 1f
-        exoPlayer.setMediaItem(MediaItem.fromUri(cache.fileFor(item).toURI().toString()))
-        exoPlayer.prepare()
-        exoPlayer.play()
+
         val fixed = item.durationMs
-        val ok = if (fixed != null) {
+        val ok: Boolean
+        if (fixed != null) {
+            exoPlayer.setMediaItem(MediaItem.fromUri(cache.fileFor(item).toURI().toString()))
+            exoPlayer.prepare()
+            exoPlayer.play()
             delay(fixed)
-            true
+            ok = true
         } else {
-            awaitPlaybackEnd()
+            // No declared duration, so we wait for ExoPlayer to say the item
+            // ended. The listener must be attached BEFORE prepare(): Media3 does
+            // not replay an already-set error or a terminal state to a listener
+            // added afterwards, so a file that fails fast would leave this
+            // waiting forever - the screen frozen on one frame, reporting that
+            // item as "now playing" indefinitely and never recording a play.
+            ok = awaitPlaybackEnd {
+                exoPlayer.setMediaItem(MediaItem.fromUri(cache.fileFor(item).toURI().toString()))
+                exoPlayer.prepare()
+                exoPlayer.play()
+            }
         }
         exoPlayer.stop()
         // A file ExoPlayer can't decode fails instantly. Without this floor, a
@@ -280,25 +294,37 @@ private class ZonePlayer(
         return ok
     }
 
-    /** @return true if playback reached the end, false if it errored out. */
-    private suspend fun awaitPlaybackEnd(): Boolean = suspendCancellableCoroutine { continuation ->
+    /**
+     * Runs [start] with a listener already attached, then waits for playback to
+     * end.
+     *
+     * @return true if it reached the end, false if it errored or never started.
+     */
+    private suspend fun awaitPlaybackEnd(start: () -> Unit): Boolean {
+        val finished = CompletableDeferred<Boolean>()
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
-                if (state == Player.STATE_ENDED) {
-                    exoPlayer.removeListener(this)
-                    if (continuation.isActive) continuation.resume(true)
-                }
+                if (state == Player.STATE_ENDED) finished.complete(true)
             }
 
             override fun onPlayerErrorChanged(error: androidx.media3.common.PlaybackException?) {
-                if (error != null) {
-                    exoPlayer.removeListener(this)
-                    if (continuation.isActive) continuation.resume(false) // skip broken file
-                }
+                if (error != null) finished.complete(false) // skip broken file
             }
         }
         exoPlayer.addListener(listener)
-        continuation.invokeOnCancellation { exoPlayer.removeListener(listener) }
+        try {
+            start()
+            // Catch an error raised synchronously by prepare(), before the
+            // listener could fire at all.
+            exoPlayer.playerError?.let { finished.complete(false) }
+            // Hard ceiling so this can never wait forever. A real item ends via
+            // the listener long before it; only a wedged decoder gets here, and
+            // returning false lets the loop move on rather than stranding the
+            // screen on a single frame until someone power-cycles the TV.
+            return withTimeoutOrNull(MAX_VIDEO_MS) { finished.await() } ?: false
+        } finally {
+            exoPlayer.removeListener(listener)
+        }
     }
 
     fun release() {

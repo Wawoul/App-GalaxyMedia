@@ -12,8 +12,8 @@ android {
         applicationId = "com.galaxymedia.player"
         minSdk = 24        // Android TV 7.0+ covers TCL sets
         targetSdk = 35
-        versionCode = 24
-        versionName = "1.4.1"
+        versionCode = 25
+        versionName = "1.4.2"
     }
 
     buildTypes {
