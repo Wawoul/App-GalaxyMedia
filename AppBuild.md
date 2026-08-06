@@ -153,3 +153,37 @@ You only sideload manually once per TV. For every release after that:
 | App can't reach the server | Test `https://signage.example.com/api/health` in the TV browser or your phone on the same network |
 | Pairing code expired | It rotates automatically every 15 min - just use the code currently on screen |
 | adb connect refused | Enable Network/ADB debugging on the TV and accept the authorization popup |
+| Screen plays fine but Reports stay empty | Read the device log (below) - the screen looking healthy tells you nothing about whether the play was recorded |
+
+## 9. Reading the device log
+
+The dashboard shows what the screen *reports*, which is not the same as what it
+is *doing*. A screen can play perfectly, heartbeat every 45s and show the right
+"now playing" while silently recording nothing. When playback behaves oddly, go
+to the device log first - it is usually quicker than reasoning from server data,
+and it is the only place that shows what the player is actually doing.
+
+From a machine on the same network as the TV:
+
+```powershell
+adb connect <TV_IP>:5555
+adb logcat -c                                    # clear old lines first
+adb logcat | findstr /i "galaxymedia ExoPlayer"  # Linux/macOS: grep -iE "galaxymedia|ExoPlayer"
+```
+
+Let it run through two or three items, then read it:
+
+- `ExoPlayerImpl: Init` **once**, then steady playback, is healthy. The player is
+  built once and reused for every item.
+- `ExoPlayerImpl: Release` followed by `Init` **between items** means playback is
+  being torn down and restarted. If that happens part-way through an item, the
+  item never reaches its end, so it is never recorded as a play - the screen
+  looks fine and Reports stay empty. This is what a schedule being re-applied
+  when nothing actually changed looks like.
+- `MediaCodec` lines around a changeover are normal - that is just the decoder
+  being swapped for the next file.
+
+Cross-check against the server: a play should be written at the moment an item
+ends, and the gap between consecutive plays should match the media's real
+duration. A gap noticeably shorter than the file is a sign playback is being
+restarted early rather than finishing.

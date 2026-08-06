@@ -272,6 +272,15 @@ reset, a crash watchdog with reporting for the Android player, and deduped
 proof-of-play ingestion (a resent heartbeat batch after a lost response no longer
 double-counts).
 
+A play is recorded when an item **finishes**, not when it starts, so the gap
+between consecutive records should match the media's real duration. Anything
+that restarts playback mid-item therefore inflates the count: the item is played
+again from the start, and the partial play is still recorded. Screens running
+before 2026-08-06 re-applied their schedule on every sync (every 60s) even when
+nothing had changed, so proof-of-play from that period over-counts any item
+longer than the sync interval - roughly 2x for a 3-minute video. Counts from
+2026-08-06 onward reflect actual completed plays.
+
 Still open: drag-to-move/resize calendar blocks, a canvas-based layout editor (custom
 zones are numeric percentages today), per-company Telegram chats, media quality
 variants (server-side transcoding), and an Electron shell around the web player for a

@@ -229,6 +229,21 @@ installer in public mode. Use HTTPS for anything reachable from the internet.
    has no Settings UI for it, hence adb. Skipping this is safe - you keep the
    foreground service and lose only the self-relaunch backstop.
 
+**Diagnosing a screen:** the dashboard shows what a screen *reports*, which is not
+the same as what it is *doing* - a screen can play perfectly, heartbeat, and show
+the right "now playing" while recording nothing. When playback misbehaves, read the
+device log first; it is usually faster than inferring from server-side data:
+
+```bash
+adb connect <TV_IP>:5555
+adb logcat -c && adb logcat | grep -iE "galaxymedia|ExoPlayer"   # Windows: findstr /i "galaxymedia ExoPlayer"
+```
+
+`ExoPlayerImpl: Init` once then steady playback is healthy. A `Release`/`Init` pair
+*between* items means playback is being torn down mid-item, so items never reach
+their end and never count as plays. See
+[AppBuild.md](AppBuild.md#9-reading-the-device-log) for how to read it.
+
 **Any browser (kiosk PCs, Raspberry Pi, quick previews - needs connectivity):**
 
 First enable the web player in the admin's **System** tab (it is off by default). Then
