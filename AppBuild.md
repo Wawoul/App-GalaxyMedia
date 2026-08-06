@@ -69,13 +69,65 @@ needed, output in `app\build\outputs\apk\debug\`. Fine for a first smoke test.)*
 
 ## 4. Prepare the TV (TCL / Android TV)
 
-On the TV:
+This unlocks developer mode and lets a PC talk to the TV over the network. You need
+it to install the APK by adb, to grant the self-restart permission (section 7), and
+to read the device log when something misbehaves (section 10). Do it once per TV.
 
-1. **Settings → System → About** (on some TCLs: *Settings → More Settings → Device Preferences → About*).
-2. Scroll to **Build** and click OK on it **7 times** → "You are now a developer!"
-3. Back in Settings → **Developer options** → enable **USB debugging** (and
-   **Network debugging** / "ADB over network" if offered - handy).
-4. Note the TV's IP address: **Settings → Network → your Wi-Fi/Ethernet → IP address**.
+### 4a. Unlock Developer options
+
+1. Open **Settings** on the TV.
+2. Find the **About** screen. The path varies by model - try in this order:
+   - **Settings → System → About**
+   - **Settings → Device Preferences → About** (most Google/stock Android TV)
+   - **Settings → More Settings → Device Preferences → About** (many TCL sets)
+3. Scroll down to **Build** (sometimes *Build number*).
+4. **Press OK/Select on it 7 times.** A counter appears - "You are now 3 steps away
+   from being a developer" - then **"You are now a developer!"**
+
+If nothing happens, you are on the wrong row: it must be **Build**, not "Android
+version" or "Model". Keep pressing at a steady pace; pausing too long resets the count.
+
+### 4b. Turn on debugging
+
+1. Go back one level and open **Developer options**. It sits near the bottom of
+   **Settings → System**, or **Settings → Device Preferences**, depending on the model.
+   It only exists after 4a.
+2. Enable **USB debugging**. On a TV this is the master switch for adb - turn it on
+   even though you are connecting over the network, because most sets gate network
+   adb behind it.
+3. Enable **Network debugging** if your set offers it (also called *ADB over network*,
+   *Wireless debugging*, or *Remote debugging*). Some TCL sets have no such toggle and
+   simply listen on port 5555 once USB debugging is on - that is fine, carry on.
+
+> **Wireless debugging with a pairing code?** Android 11+ sets sometimes show
+> *Wireless debugging → Pair device with pairing code* instead of a plain port. Use
+> `adb pair <TV_IP>:<pairing-port>` with the 6-digit code shown on the TV first, then
+> `adb connect <TV_IP>:5555` as normal. The pairing port is **not** the same as the
+> connect port.
+
+### 4c. Note the TV's IP address
+
+**Settings → Network & Internet → your Wi-Fi/Ethernet connection → IP address.**
+
+Write this down - every adb command needs it. Use the TV's *own* address, not the
+router's. On a routed or VLANed site they differ, and the address shown in the
+dashboard's Health panel is whatever the server saw the traffic arrive from, which
+may be neither.
+
+### 4d. Accept the authorization prompt
+
+The first time you run `adb connect` from a new PC, the TV shows **"Allow USB
+debugging?"** with the PC's RSA fingerprint. **Tick "Always allow from this computer"
+and choose OK, using the TV remote.**
+
+This is the step people miss: adb reports `unauthorized` or `device offline` and it
+looks like a network fault, when in fact a dialog is sitting unanswered on the screen.
+If you never saw the prompt, run `adb kill-server` on the PC then `adb connect` again
+and watch the TV.
+
+**TCL sets specifically:** if the TV also has **Settings → System → Security &
+restrictions → Verify apps** enabled, turn it off while you work - it can silently
+block sideloads.
 
 ## 5. Install the APK on the TV
 
@@ -149,10 +201,8 @@ cd $env:LOCALAPPDATA\Android\Sdk\platform-tools
 .\adb connect <TV_IP>:5555     # accept the popup on the TV the first time
 ```
 
-The TV's IP is in **Settings → Network → your connection → IP address**. Use the
-TV's *own* address, not the router's - on a routed network they differ, and the
-address the dashboard shows under "Health" is the one the server saw the traffic
-come from, which may be neither.
+If this is the first connection from this PC, accept the authorization prompt on
+the TV (section 4d). The TV's IP comes from section 4c.
 
 **Grant the permission, then confirm it took:**
 
@@ -196,7 +246,9 @@ You only sideload manually once per TV. For every release after that:
 | TV refuses to install the APK | Enable "Install unknown apps" for the file manager, or use adb (Option B) |
 | App can't reach the server | Test `https://signage.example.com/api/health` in the TV browser or your phone on the same network |
 | Pairing code expired | It rotates automatically every 15 min - just use the code currently on screen |
-| adb connect refused | Enable Network/ADB debugging on the TV and accept the authorization popup |
+| adb connect refused | Enable Network/ADB debugging on the TV (section 4b) and accept the authorization popup (section 4d) |
+| adb says `unauthorized` or `device offline` | The "Allow USB debugging?" dialog is waiting unanswered on the TV - answer it with the remote. If it never appeared, `adb kill-server` then reconnect (section 4d) |
+| Pressing Build 7 times does nothing | Wrong row - it must be **Build**/*Build number*, not "Android version". Press at a steady pace; long pauses reset the counter (section 4a) |
 | Screen plays fine but Reports stay empty | Read the device log (below) - the screen looking healthy tells you nothing about whether the play was recorded |
 
 ## 10. Reading the device log
