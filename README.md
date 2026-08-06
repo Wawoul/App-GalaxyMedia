@@ -242,7 +242,7 @@ adb logcat -c && adb logcat | grep -iE "galaxymedia|ExoPlayer"   # Windows: find
 `ExoPlayerImpl: Init` once then steady playback is healthy. A `Release`/`Init` pair
 *between* items means playback is being torn down mid-item, so items never reach
 their end and never count as plays. See
-[AppBuild.md](AppBuild.md#9-reading-the-device-log) for how to read it.
+[AppBuild.md](AppBuild.md#10-reading-the-device-log) for how to read it.
 
 **Any browser (kiosk PCs, Raspberry Pi, quick previews - needs connectivity):**
 

@@ -127,7 +127,51 @@ and reboot it offline (must come back playing with no remote-control input).
    sends an "Install latest app update" command instead - one click with the remote, but
    better done now while you're here.)
 
-## 7. Releasing updates (after the first install)
+## 7. Let the app restart itself (unattended screens)
+
+Do this on any screen nobody is going to be standing next to. It is one command,
+and it is the difference between a screen that recovers on its own and one that
+sits on the TV's home screen until someone visits it.
+
+The player runs as a foreground service so Android does not evict it under memory
+pressure - the usual reason a screen quietly drops back to the apps row after days
+of uptime. If it dies anyway, a watchdog relaunches it. But since Android 10 an app
+with no visible window is not allowed to start an activity at all, so that relaunch
+only works if the app holds the "draw over other apps" permission. Android TV has
+no Settings UI for it, which is why this is an adb command.
+
+**Connect to the TV** (from any machine on the same network as the TV - this is the
+same `adb connect` used for installs, and the TV needs Network/ADB debugging on from
+step 4):
+
+```powershell
+cd $env:LOCALAPPDATA\Android\Sdk\platform-tools
+.\adb connect <TV_IP>:5555     # accept the popup on the TV the first time
+```
+
+The TV's IP is in **Settings → Network → your connection → IP address**. Use the
+TV's *own* address, not the router's - on a routed network they differ, and the
+address the dashboard shows under "Health" is the one the server saw the traffic
+come from, which may be neither.
+
+**Grant the permission, then confirm it took:**
+
+```powershell
+.\adb shell appops set com.galaxymedia.player SYSTEM_ALERT_WINDOW allow
+.\adb shell appops get com.galaxymedia.player SYSTEM_ALERT_WINDOW
+```
+
+(Drop the `.\` if adb is on your PATH, or on Linux/macOS.)
+
+The second command must print `allow`. Check it rather than assuming - a set that
+did not apply prints something like `SYSTEM_ALERT_WINDOW: default; rejectTime=...`,
+which means the permission was refused and the watchdog cannot relaunch the app. If
+you see that, reboot the TV and run the set again.
+
+Skipping this section is safe: you keep the foreground service and lose only the
+self-relaunch backstop.
+
+## 8. Releasing updates (after the first install)
 
 You only sideload manually once per TV. For every release after that:
 
@@ -142,7 +186,7 @@ You only sideload manually once per TV. For every release after that:
    it isn't automatic or bundled with Reload). The TV verifies the file hash first;
    the first time, grant "Install unknown apps" to Galaxy Media Player when asked.
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 | Symptom | Fix |
 |---|---|
@@ -155,7 +199,7 @@ You only sideload manually once per TV. For every release after that:
 | adb connect refused | Enable Network/ADB debugging on the TV and accept the authorization popup |
 | Screen plays fine but Reports stay empty | Read the device log (below) - the screen looking healthy tells you nothing about whether the play was recorded |
 
-## 9. Reading the device log
+## 10. Reading the device log
 
 The dashboard shows what the screen *reports*, which is not the same as what it
 is *doing*. A screen can play perfectly, heartbeat every 45s and show the right
@@ -166,9 +210,10 @@ and it is the only place that shows what the player is actually doing.
 From a machine on the same network as the TV:
 
 ```powershell
-adb connect <TV_IP>:5555
-adb logcat -c                                    # clear old lines first
-adb logcat | findstr /i "galaxymedia ExoPlayer"  # Linux/macOS: grep -iE "galaxymedia|ExoPlayer"
+cd $env:LOCALAPPDATA\Android\Sdk\platform-tools
+.\adb connect <TV_IP>:5555
+.\adb logcat -c                                    # clear old lines first
+.\adb logcat | findstr /i "galaxymedia ExoPlayer"  # Linux/macOS: grep -iE "galaxymedia|ExoPlayer"
 ```
 
 Let it run through two or three items, then read it:
