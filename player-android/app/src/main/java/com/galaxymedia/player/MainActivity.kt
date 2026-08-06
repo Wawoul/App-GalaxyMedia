@@ -410,9 +410,21 @@ class MainActivity : AppCompatActivity() {
                 lastLoopAt = SystemClock.elapsedRealtime()
                 try {
                     // Periodic full sync as a fallback when WS is blocked.
+                    //
+                    // Deliberately NOT awaited: syncNow downloads media on a
+                    // client with no callTimeout and a 5-minute read gap, so a
+                    // stalled transfer parks it for a long time - and for a big
+                    // file over a bad link, that is normal rather than broken.
+                    // Awaiting it here stops the heartbeat going out at all,
+                    // which loses the proof-of-play the reports are billed on,
+                    // and stalls lastLoopAt until the watchdog decides the app
+                    // is wedged and relaunches it on top of itself. The sync
+                    // has its own mutex, so letting it run alongside the
+                    // heartbeat is safe; overlapping passes are already
+                    // serialised there.
                     if (System.currentTimeMillis() - lastSync > POLL_FALLBACK_MS) {
-                        syncNow()
                         lastSync = System.currentTimeMillis()
+                        launch { runCatching { syncNow() } }
                     }
                     // Self-update is deliberately NOT automatic: installing shows a
                     // system confirm prompt that pauses playback until someone is
@@ -450,8 +462,20 @@ class MainActivity : AppCompatActivity() {
      * all land at once, and MediaCache's own mutex only orders the downloads. Two
      * overlapping syncs would still race to applySchedule, letting an older
      * manifest win and leaving the screen on stale content.
+     *
+     * The periodic caller launches this without awaiting it, so a pass that is
+     * still downloading when the next one comes round must be skipped rather
+     * than queued - otherwise a slow link builds a backlog of syncs that all
+     * run once the download finishes.
      */
-    private suspend fun syncNow() = syncMutex.withLock { syncNowLocked() }
+    private suspend fun syncNow() {
+        if (!syncMutex.tryLock()) return // a sync is already in flight
+        try {
+            syncNowLocked()
+        } finally {
+            syncMutex.unlock()
+        }
+    }
 
     private suspend fun syncNowLocked() {
         val manifest = api.fetchManifest()
