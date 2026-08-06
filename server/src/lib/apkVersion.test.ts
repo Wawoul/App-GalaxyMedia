@@ -19,7 +19,7 @@ describe('readApkVersion', () => {
   // Skips rather than fails if the local release folder is empty - a fresh
   // clone has no built APKs, and this should not break `npm test` there.
   const cases: [string, number, string][] = [
-    ['GalaxyPlayerV1.4.4.apk', 27, '1.4.4'],
+    ['GalaxyPlayerV1.4.6.apk', 28, '1.4.6'],
     ['GalaxyPlayerV1.1.1.apk', 3, '1.1.1'],
     ['GalaxyPlayerV1.1.0.apk', 2, '1.1.0'],
     ['GalaxyPlayerV1.0.0.apk', 1, '1.0.0'],
@@ -115,7 +115,7 @@ describe('readApkVersion', () => {
 
   it('returns nulls for a file that is not an APK', () => {
     // A .idsig is a real file in that directory but not a zip we can read.
-    const notApk = apk('GalaxyPlayerV1.4.4.apk.idsig');
+    const notApk = apk('GalaxyPlayerV1.4.6.apk.idsig');
     if (!existsSync(notApk)) return;
     expect(() => readApkVersion(notApk)).not.toThrow();
     expect(readApkVersion(notApk).versionCode).toBeNull();

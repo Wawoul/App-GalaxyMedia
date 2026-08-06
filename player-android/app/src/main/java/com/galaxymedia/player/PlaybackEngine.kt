@@ -235,18 +235,15 @@ private class ZonePlayer(
                 if (error != null) failed = true
             }
         }
-        // Attach BEFORE prepare(). A dead origin can fail fast enough to latch
-        // the error first, and Media3 does not re-deliver an already-set error
-        // to a listener added afterwards - so the callback would never fire, the
-        // wait would run its full hour, and a black screen would be billed as an
-        // hour of playback. That is the exact failure this method exists to stop.
+        // prepare() first, then the listener - same ordering as playVideo. The
+        // player is reused between items, so a listener attached beforehand also
+        // sees the previous item's state changes. The playerError check below
+        // covers a stream that fails during prepare().
+        exoPlayer.setMediaItem(MediaItem.fromUri(url))
+        exoPlayer.prepare()
+        exoPlayer.play()
         exoPlayer.addListener(listener)
         try {
-            exoPlayer.setMediaItem(MediaItem.fromUri(url))
-            exoPlayer.prepare()
-            exoPlayer.play()
-            // Belt and braces for an error raised synchronously by prepare(),
-            // before the listener could be invoked at all.
             if (exoPlayer.playerError != null) failed = true
             // Run for the configured duration (default 1 hour - a single-item
             // playlist just restarts it, so it is effectively continuous with a
@@ -271,26 +268,23 @@ private class ZonePlayer(
         webView.visibility = View.GONE
         exoPlayer.volume = if (item.muted) 0f else 1f
 
+        // prepare() and play() BEFORE the listener is attached. Attaching first
+        // seemed safer - it would catch a file that fails instantly - but this
+        // player is reused across items and stop()ped between them, so a listener
+        // added before prepare() also sees the tail of the previous item's state
+        // changes. That consumed the wait immediately or swallowed the real end,
+        // and the loop stopped recording plays entirely while the video kept
+        // playing. The fast-failure case is covered by the playerError check
+        // inside awaitPlaybackEnd instead, which needs no reordering.
+        exoPlayer.setMediaItem(MediaItem.fromUri(cache.fileFor(item).toURI().toString()))
+        exoPlayer.prepare()
+        exoPlayer.play()
         val fixed = item.durationMs
-        val ok: Boolean
-        if (fixed != null) {
-            exoPlayer.setMediaItem(MediaItem.fromUri(cache.fileFor(item).toURI().toString()))
-            exoPlayer.prepare()
-            exoPlayer.play()
+        val ok = if (fixed != null) {
             delay(fixed)
-            ok = true
+            true
         } else {
-            // No declared duration, so we wait for ExoPlayer to say the item
-            // ended. The listener must be attached BEFORE prepare(): Media3 does
-            // not replay an already-set error or a terminal state to a listener
-            // added afterwards, so a file that fails fast would leave this
-            // waiting forever - the screen frozen on one frame, reporting that
-            // item as "now playing" indefinitely and never recording a play.
-            ok = awaitPlaybackEnd {
-                exoPlayer.setMediaItem(MediaItem.fromUri(cache.fileFor(item).toURI().toString()))
-                exoPlayer.prepare()
-                exoPlayer.play()
-            }
+            awaitPlaybackEnd()
         }
         exoPlayer.stop()
         // A file ExoPlayer can't decode fails instantly. Without this floor, a
@@ -306,13 +300,17 @@ private class ZonePlayer(
      *
      * @return true if it reached the end, false if it errored or never started.
      */
-    private suspend fun awaitPlaybackEnd(start: () -> Unit): Boolean =
-        // suspendCancellableCoroutine, NOT a CompletableDeferred that gets
-        // awaited: Player.Listener callbacks are delivered on the main thread,
-        // and this loop runs on lifecycleScope - also the main thread. Awaiting
-        // a deferred there parks the only thread that could ever complete it, so
-        // the video plays on (ExoPlayer has its own threads) while the loop never
-        // advances, never records a play and never moves to the next item.
+    /**
+     * Waits for the current item to finish.
+     *
+     * suspendCancellableCoroutine, NOT a deferred that gets awaited: listener
+     * callbacks arrive on the main thread, which is the thread this loop runs
+     * on, so awaiting would park the only thread able to complete it.
+     *
+     * The timeout is a backstop for a decoder that wedges silently; a real item
+     * ends via the listener long before it.
+     */
+    private suspend fun awaitPlaybackEnd(): Boolean =
         withTimeoutOrNull(MAX_VIDEO_MS) {
             suspendCancellableCoroutine { continuation ->
                 val listener = object : Player.Listener {
@@ -330,20 +328,16 @@ private class ZonePlayer(
                         }
                     }
                 }
-                // Attached before prepare(): Media3 does not replay an
-                // already-set error to a listener added afterwards, so a file
-                // that fails fast would otherwise never notify anyone.
                 exoPlayer.addListener(listener)
                 continuation.invokeOnCancellation { exoPlayer.removeListener(listener) }
-                start()
-                // An error raised synchronously by prepare() beats the listener.
+                // Covers a file that already failed during prepare(), which is
+                // the case attaching the listener earlier was meant to catch -
+                // without the reordering that broke normal playback.
                 exoPlayer.playerError?.let {
                     exoPlayer.removeListener(listener)
                     if (continuation.isActive) continuation.resume(false)
                 }
             }
-            // The ceiling above is the backstop for a decoder that wedges without
-            // reporting anything; a real item ends via the listener long before it.
         } ?: false
 
     fun release() {
