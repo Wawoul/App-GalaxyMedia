@@ -369,10 +369,20 @@ class MainActivity : AppCompatActivity() {
             manifest.schedules.isNotEmpty() -> entry?.playlist
             else -> manifest.playlist // legacy manifests without schedules
         }
+        // The key identifies what is scheduled AND what it contains. Editing a
+        // playlist in place keeps its id, so an id-only key would leave the
+        // screen on the old items until something else forced a restart - but
+        // including the items means an unchanged playlist keeps the same key and
+        // playback is left alone, which is what lets a video reach its end and
+        // be recorded as a play.
         val key = when {
             blackout -> "blackout"
-            layout != null -> "layout:${layout.id}"
-            else -> playlist?.id
+            layout != null -> "layout:${layout.id}:${layout.zones.joinToString(",") { z ->
+                "${z.key}=${z.playlist?.items?.joinToString("|") { "${it.id}:${it.durationMs}" }}"
+            }}"
+            else -> playlist?.let { p ->
+                "${p.id}:${p.items.joinToString("|") { "${it.id}:${it.durationMs}" }}"
+            }
         }
         if (key == activePlaylistId && (isPlaying || blackout)) return // no change
         activePlaylistId = key
@@ -422,9 +432,16 @@ class MainActivity : AppCompatActivity() {
                     // has its own mutex, so letting it run alongside the
                     // heartbeat is safe; overlapping passes are already
                     // serialised there.
+                    // lifecycleScope, NOT this loop's scope: a bare launch here
+                    // makes the sync a CHILD of syncJob, so the download still
+                    // ties the loop's scope up and a failure inside it cancels
+                    // the parent - killing the heartbeat outright, which is
+                    // worse than the stall it was meant to fix. The sync must
+                    // outlive and stay independent of the heartbeat pass that
+                    // started it, and only the Activity scope gives that.
                     if (System.currentTimeMillis() - lastSync > POLL_FALLBACK_MS) {
                         lastSync = System.currentTimeMillis()
-                        launch { runCatching { syncNow() } }
+                        lifecycleScope.launch { runCatching { syncNow() } }
                     }
                     // Self-update is deliberately NOT automatic: installing shows a
                     // system confirm prompt that pauses playback until someone is
@@ -449,6 +466,12 @@ class MainActivity : AppCompatActivity() {
                 } catch (e: RevokedException) {
                     onUnpaired()
                     return@launch
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    // Never swallowed by the catch below: cancellation is how the
+                    // loop is meant to end (unpair, Activity teardown), and
+                    // treating it as a transient network error would leave a
+                    // cancelled job spinning instead of stopping.
+                    throw e
                 } catch (_: Exception) {
                     // Offline: keep playing from cache; next loop retries (plays/crash report stay buffered).
                 }
@@ -502,7 +525,17 @@ class MainActivity : AppCompatActivity() {
         }
         runOnUiThread {
             updateBadge.visibility = View.GONE
-            activePlaylistId = null // force re-evaluation with the fresh manifest
+            // Deliberately does NOT reset activePlaylistId. Doing so defeats the
+            // "no change" guard in applySchedule, so every sync tore the
+            // ZonePlayer down, released the ExoPlayer mid-item and restarted the
+            // playlist at item 0. With a sync every POLL_FALLBACK_MS (60s) and a
+            // 90s video, the item could never reach its end: STATE_ENDED never
+            // arrived, so the play was never recorded even though the screen
+            // looked perfectly healthy. applySchedule already re-reads the
+            // manifest and restarts on its own when the resolved playlist,
+            // layout or blackout state actually differs; a manifest whose
+            // content changed under the same id is picked up by the media cache
+            // without needing playback to be interrupted.
             applySchedule(manifest)
         }
         runCatching {
