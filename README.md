@@ -49,12 +49,25 @@ Self-hosted digital signage for MSPs. No per-screen licensing, No "Freemium", No
   offline alerts by email + Telegram (configurable threshold, global and per-company
   recipients, test-send), proof-of-play reports with CSV export, config export/import
   between companies, nightly backups, admin-initiated password reset for users who
-  forget theirs.
+  forget theirs (the user must then choose their own password at next sign-in), and
+  self-service password change on the Account page. Per-company storage quotas
+  (`COMPANY_QUOTA_MB`) and a free-disk floor (`MIN_FREE_DISK_MB`) stop one tenant, or a big
+  import, from filling the server's disk. `deploy/update.sh` builds in a staging copy,
+  backs up the database, swaps the new release in and **rolls back automatically** if it
+  doesn't start healthy.
+- **Admin portal**: responsive (phone to wide desktop) with dark and light themes that
+  follow your OS, screens as cards or a table with status filters, bookmarkable pages,
+  and in-page dialogs instead of browser popups. The dashboard's "now playing" uses the
+  same schedule rules as the TVs, in the same timezone (the screen's own, else its
+  group's, else Europe/London).
 - **Security**: TLS by default (plain-HTTP mode available for trusted LAN-only
   installs), Argon2id + mandatory TOTP 2FA for MSP staff, encrypted secrets
   at rest, scoped revocable device tokens, signed download URLs, rate-limited device
-  pairing, audit log, hardened systemd/nginx/ufw/fail2ban deployment. See
-  [SECURITY.md](SECURITY.md).
+  pairing, audit log, hardened systemd/nginx/ufw/fail2ban deployment. Sign-in lockout,
+  single-use short-lived WebSocket tickets, `http(s)`-only item URLs, and an SSRF guard
+  that re-checks every address a link import resolves to. Behind a reverse proxy or
+  tunnel, set `TRUST_PROXY` so audit logs and rate limits see the real client address.
+  See [SECURITY.md](SECURITY.md).
 
 ## Components
 
@@ -269,9 +282,15 @@ cd admin && npm install && npm run dev
 
 # TV app: open player-android/ in Android Studio, run on an Android TV device/emulator
 
-# Tests / typecheck
+# Tests / typecheck / build
 cd server && npm test && npm run typecheck
-cd admin && npm run typecheck
+cd admin && npm run typecheck && npm run build
+
+# Android release build (JDK 17 + Android SDK with platform 35; put the SDK path in
+# player-android/local.properties as  sdk.dir=C:/Android/Sdk  - forward slashes).
+# Sign the result with your own keystore; TVs only accept updates signed with the
+# same key as the app they already have. See AppBuild.md.
+cd player-android && ./gradlew assembleRelease
 
 # The route tests (cross-tenant isolation, auth) need a throwaway Postgres -
 # they migrate it and delete its rows. Without TEST_DATABASE_URL they skip,
