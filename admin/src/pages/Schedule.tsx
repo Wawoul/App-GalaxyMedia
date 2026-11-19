@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useUi } from '../components/ui';
 import { api } from '../api';
 import type { Assignment, Company, Group, Layout, Playlist, Screen } from '../types';
 
@@ -77,6 +78,7 @@ function nextDateForDay(dow: number): string {
 }
 
 export function Schedule({ company, canEdit }: { company: Company; canEdit: boolean }) {
+  const ui = useUi();
   const [groups, setGroups] = useState<Group[]>([]);
   const [screens, setScreens] = useState<Screen[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
@@ -144,7 +146,7 @@ export function Schedule({ company, canEdit }: { company: Company; canEdit: bool
   };
 
   const removeAssignment = async (a: Assignment) => {
-    if (confirm(`Remove "${a.playlist_name}" from this schedule?`)) {
+    if (await ui.ask(`Remove "${a.playlist_name}" from this schedule?`)) {
       // Unhandled, a failed delete left the slot on screen with no error, so it
       // looked like the click simply didn't register.
       try {
@@ -491,7 +493,7 @@ export function Schedule({ company, canEdit }: { company: Company; canEdit: bool
               {draft.id && (
                 <button className="danger" style={{ marginRight: 'auto' }}
                   onClick={async () => {
-                    if (confirm('Remove this slot from the schedule?')) {
+                    if (await ui.ask('Remove this slot from the schedule?')) {
                       try {
                         setError('');
                         await api(`/api/assignments/${draft.id}`, { method: 'DELETE' });

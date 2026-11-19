@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { useUi } from '../components/ui';
 import { api } from '../api';
 import type { Company } from '../types';
 
@@ -22,6 +23,7 @@ export function Companies({
   reload: () => Promise<void>;
   canCreate: boolean;
 }) {
+  const ui = useUi();
   const [name, setName] = useState('');
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
@@ -38,7 +40,7 @@ export function Companies({
       let target = importTarget;
       if (!target) {
         const suggested = doc.exportedFrom ? `${doc.exportedFrom}` : 'Imported company';
-        const name = window.prompt('Name for the new company:', suggested);
+        const name = await ui.input('Name for the new company:', suggested);
         if (!name?.trim()) return;
         target = await api<Company>('/api/companies', { body: { name: name.trim() } });
       }
@@ -107,7 +109,7 @@ export function Companies({
           if (file) void runImport(file);
         }} />
       <div className="panel">
-        <table>
+        <div className="table-wrap"><table>
           <thead>
             <tr><th>Name</th><th>Screens</th><th>Extra alert recipients</th><th>Brand name (white-label)</th>{canCreate && <th></th>}</tr>
           </thead>
@@ -175,7 +177,7 @@ export function Companies({
                       </button>
                       <button className="danger"
                         onClick={async () => {
-                          if (confirm(`Delete "${c.name}" and ALL its screens, media and playlists? This cannot be undone.`)) {
+                          if (await ui.ask(`Delete "${c.name}" and ALL its screens, media and playlists? This cannot be undone.`)) {
                             await api(`/api/companies/${c.id}`, { method: 'DELETE' });
                             await reload();
                           }
@@ -189,7 +191,7 @@ export function Companies({
             ))}
             {companies.length === 0 && <tr><td colSpan={5} className="muted">No companies yet.</td></tr>}
           </tbody>
-        </table>
+        </table></div>
         <div className="muted" style={{ marginTop: 8, fontSize: 13 }}>
           Offline alerts always go to the global recipients in the Alerts tab; addresses here
           are notified additionally, but only for that company's screens.

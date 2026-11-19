@@ -71,7 +71,7 @@ export function Reports({ company }: { company: Company }) {
       {error && <div className="error">{error}</div>}
 
       <div className="panel">
-        <table>
+        <div className="table-wrap"><table>
           <thead><tr><th>Day</th><th>Screen</th><th>Item</th><th>Plays</th><th>Last played</th></tr></thead>
           <tbody>
             {visible.map((r, i) => (
@@ -89,7 +89,7 @@ export function Reports({ company }: { company: Company }) {
               </td></tr>
             )}
           </tbody>
-        </table>
+        </table></div>
         <div className="muted" style={{ marginTop: 8, fontSize: 13 }}>
           Days are UTC. Play logs are kept for 90 days.
         </div>

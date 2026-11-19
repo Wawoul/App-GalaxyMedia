@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useUi } from '../components/ui';
 import { api } from '../api';
 import type { Company, CustomZone, Layout, LayoutPreset, Playlist } from '../types';
 
@@ -51,6 +52,7 @@ function PresetPreview({
 }
 
 export function Layouts({ company, canEdit }: { company: Company; canEdit: boolean }) {
+  const ui = useUi();
   const [layouts, setLayouts] = useState<Layout[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [error, setError] = useState('');
@@ -242,7 +244,7 @@ export function Layouts({ company, canEdit }: { company: Company; canEdit: boole
       {error && <div className="error">{error}</div>}
 
       <div className="panel">
-        <table>
+        <div className="table-wrap"><table>
           <thead><tr><th></th><th>Name</th><th>Zones</th>{canEdit && <th></th>}</tr></thead>
           <tbody>
             {layouts.map((l) => (
@@ -271,7 +273,7 @@ export function Layouts({ company, canEdit }: { company: Company; canEdit: boole
                         } catch {
                           used = ' Schedule slots using it are removed too.';
                         }
-                        if (confirm(`Delete layout "${l.name}"?${used}`)) {
+                        if (await ui.ask(`Delete layout "${l.name}"?${used}`)) {
                           try {
                             setError('');
                             await api(`/api/layouts/${l.id}`, { method: 'DELETE' });
@@ -289,7 +291,7 @@ export function Layouts({ company, canEdit }: { company: Company; canEdit: boole
             ))}
             {layouts.length === 0 && <tr><td colSpan={4} className="muted">No layouts yet.</td></tr>}
           </tbody>
-        </table>
+        </table></div>
       </div>
     </>
   );

@@ -12,18 +12,25 @@ import { Schedule } from './pages/Schedule';
 import { Screens } from './pages/Screens';
 import { System } from './pages/System';
 import { Users } from './pages/Users';
+import { Icon, type IconName } from './components/icons';
+import { UiProvider } from './components/ui';
+import { hashFor, pageFromHash, type Page } from './route';
+import { applyTheme, getTheme, nextTheme, type ThemeChoice } from './theme';
 import type { Company, Me } from './types';
-
-type Page =
-  | 'screens' | 'media' | 'playlists' | 'layouts' | 'schedule' | 'reports'
-  | 'companies' | 'users' | 'alerts' | 'system' | 'account';
 
 export function App() {
   const [ready, setReady] = useState(false);
   const [me, setMe] = useState<Me | null>(null);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [companyId, setCompanyId] = useState<string>('');
-  const [page, setPage] = useState<Page>('screens');
+  const [page, setPageState] = useState<Page>(() => pageFromHash(window.location.hash));
+  const [navOpen, setNavOpen] = useState(false);
+  const [theme, setTheme] = useState<ThemeChoice>(getTheme);
+  useEffect(() => {
+    const onHash = () => { setPageState(pageFromHash(window.location.hash)); setNavOpen(false); };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
 
   const loadSession = useCallback(async () => {
     const user = await api<Me>('/api/auth/me');
@@ -73,54 +80,64 @@ export function App() {
     if (!list.some((c) => c.id === companyId)) setCompanyId(list[0]?.id ?? '');
   };
 
+  const titles: Record<Page, string> = {
+    screens: 'Screens', media: 'Media', playlists: 'Playlists', layouts: 'Layouts', schedule: 'Schedule',
+    reports: 'Reports', companies: 'Companies', users: 'Users', alerts: 'Alerts', system: 'System', account: 'Account',
+  };
+  const link = (p: Page, icon: IconName) => (
+    <a key={p} className="nav-item" href={hashFor(p)} aria-current={page === p ? 'page' : undefined}>
+      <Icon name={icon} /> {titles[p]}
+    </a>
+  );
+  const themeIcon: IconName = theme === 'light' ? 'sun' : theme === 'dark' ? 'moon' : 'auto';
+  const brand = me.level === 'company' && company?.brand_name ? company.brand_name : 'Galaxy Media';
+
   return (
-    <div className="layout">
-      <nav className="sidebar">
-        {me.level === 'company' && company?.brand_name ? (
-          <div className="brand" style={{ marginBottom: 4 }}>{company.brand_name}</div>
-        ) : (
-          <div className="brand" style={{ marginBottom: 4 }}>Galaxy <span>Media</span></div>
-        )}
-        <div className="muted" style={{ fontSize: 11, marginBottom: 14 }}>v{__APP_VERSION__}</div>
+    <UiProvider>
+    <div className="app">
+      <header className="topbar">
+        <button className="icon-btn" aria-label="Open menu" onClick={() => setNavOpen(true)}><Icon name="menu" size={22} /></button>
+        <div className="title">{titles[page]}</div>
+      </header>
+      <div className={`scrim${navOpen ? ' open' : ''}`} onClick={() => setNavOpen(false)} />
+      <nav className={`sidebar${navOpen ? ' open' : ''}`} aria-label="Main">
+        <div className="brand"><div className="brand-mark">G</div>{brand}</div>
+        <div className="brand-sub">v{__APP_VERSION__}</div>
         {companies.length > 0 && (
-          <>
-            <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>Working in company</div>
-            <select value={companyId} onChange={(e) => setCompanyId(e.target.value)} style={{ marginBottom: 12 }}>
+          <div className="company-switch">
+            <label htmlFor="company-select">Company</label>
+            <select id="company-select" value={companyId} onChange={(e) => setCompanyId(e.target.value)}>
               {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
-          </>
-        )}
-        <button className={page === 'screens' ? 'active' : ''} onClick={() => setPage('screens')}>Screens</button>
-        <button className={page === 'media' ? 'active' : ''} onClick={() => setPage('media')}>Media</button>
-        <button className={page === 'playlists' ? 'active' : ''} onClick={() => setPage('playlists')}>Playlists</button>
-        <button className={page === 'layouts' ? 'active' : ''} onClick={() => setPage('layouts')}>Layouts</button>
-        <button className={page === 'schedule' ? 'active' : ''} onClick={() => setPage('schedule')}>Schedule</button>
-        <button className={page === 'reports' ? 'active' : ''} onClick={() => setPage('reports')}>Reports</button>
-        {(me.level === 'msp' || canManageUsers) && <hr className="divider" />}
-        {me.level === 'msp' && (
-          <button className={page === 'companies' ? 'active' : ''} onClick={() => setPage('companies')}>Companies</button>
-        )}
-        {canManageUsers && (
-          <button className={page === 'users' ? 'active' : ''} onClick={() => setPage('users')}>Users</button>
-        )}
-        {isMspAdmin && (
-          <button className={page === 'alerts' ? 'active' : ''} onClick={() => setPage('alerts')}>Alerts</button>
-        )}
-        {isMspAdmin && (
-          <button className={page === 'system' ? 'active' : ''} onClick={() => setPage('system')}>System</button>
-        )}
-        <div style={{ flex: 1 }} />
-        <button className={page === 'account' ? 'active' : ''} onClick={() => setPage('account')}>
-          {me.displayName}
-        </button>
-        <button className="signout" onClick={() => { clearSession(); setMe(null); }}>Sign out</button>
-      </nav>
-      <main className="main">
-        {company && !['companies', 'users', 'alerts', 'system'].includes(page) && (
-          <div className="muted" style={{ marginBottom: 8 }}>
-            Company: <strong style={{ color: 'var(--text)' }}>{company.name}</strong>
           </div>
         )}
+        <div className="nav-group">Content</div>
+        {link('screens', 'screens')}
+        {link('media', 'media')}
+        {link('playlists', 'playlists')}
+        {link('layouts', 'layouts')}
+        {link('schedule', 'schedule')}
+        {link('reports', 'reports')}
+        {(me.level === 'msp' || canManageUsers) && <div className="nav-group">Admin</div>}
+        {me.level === 'msp' && link('companies', 'companies')}
+        {canManageUsers && link('users', 'users')}
+        {isMspAdmin && link('alerts', 'alerts')}
+        {isMspAdmin && link('system', 'system')}
+        <div className="sidebar-spacer" />
+        <div className="sidebar-foot">
+          <a className="user-chip" href={hashFor('account')} aria-current={page === 'account' ? 'page' : undefined}>
+            <div className="avatar">{me.displayName.slice(0, 1).toUpperCase()}</div>
+            <div className="who"><b>{me.displayName}</b><small>{me.role}</small></div>
+          </a>
+          <button className="foot-btn" onClick={() => { const n = nextTheme(theme); applyTheme(n); setTheme(n); }}>
+            <Icon name={themeIcon} /> Theme: {theme}
+          </button>
+          <button className="foot-btn signout" onClick={() => { clearSession(); setMe(null); }}>
+            <Icon name="signout" /> Sign out
+          </button>
+        </div>
+      </nav>
+      <main className="main">
         {page === 'screens' && company && (
           <Screens company={company} companies={companies} canEdit={canEdit} />
         )}
@@ -144,5 +161,6 @@ export function App() {
         )}
       </main>
     </div>
+    </UiProvider>
   );
 }

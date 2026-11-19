@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useUi } from '../components/ui';
 import { api } from '../api';
 import type { Company, Me, User } from '../types';
 
@@ -22,6 +23,7 @@ function generateTempPassword(length = 16): string {
 }
 
 export function Users({ me, companies }: { me: Me; companies: Company[] }) {
+  const ui = useUi();
   const [users, setUsers] = useState<User[]>([]);
   const [error, setError] = useState('');
   const [showCreate, setShowCreate] = useState(false);
@@ -170,7 +172,7 @@ export function Users({ me, companies }: { me: Me; companies: Company[] }) {
       {error && <div className="error">{error}</div>}
 
       <div className="panel">
-        <table>
+        <div className="table-wrap"><table>
           <thead>
             <tr>
               <th style={{ cursor: 'pointer' }} onClick={() => sortBy('name')}>User{arrow('name')}</th>
@@ -221,9 +223,9 @@ export function Users({ me, companies }: { me: Me; companies: Company[] }) {
                           <>
                             <span className="muted">Company:</span>
                             <select value={u.company_id ?? ''}
-                              onChange={(e) => {
+                              onChange={async (e) => {
                                 const target = companies.find((c) => c.id === e.target.value);
-                                if (confirm(`Move ${u.email} to ${target?.name}? They will only see that company's content and be signed out of active sessions.`)) {
+                                if (await ui.ask(`Move ${u.email} to ${target?.name}? They will only see that company's content and be signed out of active sessions.`)) {
                                   void run(() => api(`/api/users/${u.id}`, { method: 'PATCH', body: { companyId: e.target.value } }));
                                 }
                               }}>
@@ -232,8 +234,8 @@ export function Users({ me, companies }: { me: Me; companies: Company[] }) {
                           </>
                         )}
                         <button className="secondary"
-                          onClick={() => {
-                            if (confirm(`Reset 2FA for ${u.email}? They must re-enroll at next sign-in.`)) {
+                          onClick={async () => {
+                            if (await ui.ask(`Reset 2FA for ${u.email}? They must re-enroll at next sign-in.`)) {
                               void run(() => api(`/api/users/${u.id}`, { method: 'PATCH', body: { resetTotp: true } }));
                             }
                           }}>
@@ -241,7 +243,7 @@ export function Users({ me, companies }: { me: Me; companies: Company[] }) {
                         </button>
                         <button className="secondary"
                           onClick={async () => {
-                            if (!confirm(`Reset ${u.email}'s password? A new temporary password is generated ` +
+                            if (!await ui.ask(`Reset ${u.email}'s password? A new temporary password is generated ` +
                               `and shown once here - you'll need to share it with them yourself.`)) {
                               return;
                             }
@@ -257,7 +259,7 @@ export function Users({ me, companies }: { me: Me; companies: Company[] }) {
                               return;
                             }
                             await load();
-                            alert(`New temporary password for ${u.email}:\n\n${temp}\n\n` +
+                            await ui.notice(`New temporary password for ${u.email}:\n\n${temp}\n\n` +
                               `This won't be shown again - copy it now and have them sign in and change it.`);
                           }}>
                           Reset password
@@ -267,8 +269,8 @@ export function Users({ me, companies }: { me: Me; companies: Company[] }) {
                           {u.disabled ? 'Enable account' : 'Disable account'}
                         </button>
                         <button className="danger"
-                          onClick={() => {
-                            if (confirm(`Permanently delete ${u.email}? This cannot be undone.`)) {
+                          onClick={async () => {
+                            if (await ui.ask(`Permanently delete ${u.email}? This cannot be undone.`)) {
                               setEditingId(null);
                               void run(() => api(`/api/users/${u.id}`, { method: 'DELETE' }));
                             }
@@ -304,7 +306,7 @@ export function Users({ me, companies }: { me: Me; companies: Company[] }) {
             })}
             {visible.length === 0 && <tr><td colSpan={6} className="muted">No users match.</td></tr>}
           </tbody>
-        </table>
+        </table></div>
       </div>
     </>
   );

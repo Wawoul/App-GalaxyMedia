@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useUi } from '../components/ui';
 import { api, uploadWithProgress } from '../api';
 import type { Company, Folder, MediaItem } from '../types';
 
@@ -55,6 +56,7 @@ function folderSubtree(rootId: string, folders: Folder[]): Set<string> {
 }
 
 export function Media({ company, canEdit }: { company: Company; canEdit: boolean }) {
+  const ui = useUi();
   const [items, setItems] = useState<MediaItem[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [currentFolder, setCurrentFolder] = useState<string | null>(null);
@@ -122,7 +124,7 @@ export function Media({ company, canEdit }: { company: Company; canEdit: boolean
    * office uplink is simply slower than the server's.
    */
   const importFromUrl = async () => {
-    const url = window.prompt(
+    const url = await ui.input(
       'Paste a direct link to the file.\n\n' +
         'The server downloads it itself, so this works for files too big to upload ' +
         '(e.g. through Cloudflare\'s 100MB limit).\n\n' +
@@ -168,8 +170,8 @@ export function Media({ company, canEdit }: { company: Company; canEdit: boolean
     }
   };
 
-  const createFolder = () => {
-    const name = window.prompt('Folder name:');
+  const createFolder = async () => {
+    const name = await ui.input('Folder name:');
     if (name?.trim()) {
       void run(() =>
         api(`/api/companies/${company.id}/folders`, { body: { name: name.trim(), parentId: currentFolder } }),
@@ -273,7 +275,7 @@ export function Media({ company, canEdit }: { company: Company; canEdit: boolean
       {error && <div className="error">{error}</div>}
 
       <div className="panel">
-        <table>
+        <div className="table-wrap"><table>
           <thead>
             <tr><th></th><th>Name</th><th>Type</th><th>Size</th><th>Added</th>{canEdit && <th></th>}</tr>
           </thead>
@@ -289,13 +291,13 @@ export function Media({ company, canEdit }: { company: Company; canEdit: boolean
                   <td></td>
                   {canEdit && (
                     <td>
-                      <select value="" onChange={(e) => {
+                      <select value="" onChange={async (e) => {
                         const action = e.target.value;
                         if (action === 'rename') {
-                          const name = window.prompt('Rename folder:', f.name);
+                          const name = await ui.input('Rename folder:', f.name);
                           if (name?.trim()) void run(() => api(`/api/folders/${f.id}`, { method: 'PATCH', body: { name: name.trim() } }));
                         } else if (action === 'delete') {
-                          if (confirm(`Delete folder "${f.name}"? Its contents move up a level (nothing is lost).`)) {
+                          if (await ui.ask(`Delete folder "${f.name}"? Its contents move up a level (nothing is lost).`)) {
                             void run(() => api(`/api/folders/${f.id}`, { method: 'DELETE' }));
                           }
                         } else if (action === 'delete_recursive') {
@@ -308,7 +310,7 @@ export function Media({ company, canEdit }: { company: Company; canEdit: boolean
                               (folderCount > 0 ? ` across ${folderCount} subfolder${folderCount === 1 ? '' : 's'}` : '') +
                               `? Deleted files are also removed from any playlists using them. This cannot be undone.`
                             : `Delete empty folder "${f.name}" and its ${folderCount} empty subfolder${folderCount === 1 ? '' : 's'}?`;
-                          if (confirm(warning)) {
+                          if (await ui.ask(warning)) {
                             void run(() => api(`/api/folders/${f.id}?recursive=true`, { method: 'DELETE' }));
                           }
                         }
@@ -347,10 +349,10 @@ export function Media({ company, canEdit }: { company: Company; canEdit: boolean
                         <button className="secondary" onClick={() => setMovingId(null)}>Cancel</button>
                       </div>
                     ) : (
-                      <select value="" onChange={(e) => {
+                      <select value="" onChange={async (e) => {
                         const action = e.target.value;
                         if (action === 'rename') {
-                          const name = window.prompt('Rename file:', m.original_name);
+                          const name = await ui.input('Rename file:', m.original_name);
                           if (name?.trim()) {
                             void run(() => api(`/api/media/${m.id}`, { method: 'PATCH', body: { name: name.trim() } }));
                           }
@@ -359,7 +361,7 @@ export function Media({ company, canEdit }: { company: Company; canEdit: boolean
                         else if (action === 'duplicate') void run(() => api(`/api/media/${m.id}/duplicate`, { body: {} }));
                         else if (action === 'download') window.open(`${m.url}&download=1`, '_blank');
                         else if (action === 'delete') {
-                          if (confirm(`Delete "${m.original_name}"? It will be removed from playlists.`)) {
+                          if (await ui.ask(`Delete "${m.original_name}"? It will be removed from playlists.`)) {
                             void run(() => api(`/api/media/${m.id}`, { method: 'DELETE' }));
                           }
                         }
@@ -384,7 +386,7 @@ export function Media({ company, canEdit }: { company: Company; canEdit: boolean
               </td></tr>
             )}
           </tbody>
-        </table>
+        </table></div>
       </div>
     </>
   );

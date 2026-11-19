@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useUi } from '../components/ui';
 import { api } from '../api';
 import type { Company, MediaItem, Playlist, PlaylistItem } from '../types';
 
@@ -20,6 +21,7 @@ function humanDuration(ms: number): string {
 }
 
 export function Playlists({ company, canEdit }: { company: Company; canEdit: boolean }) {
+  const ui = useUi();
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [media, setMedia] = useState<MediaItem[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -54,7 +56,7 @@ export function Playlists({ company, canEdit }: { company: Company; canEdit: boo
     if (id === selected) return;
     // Switching playlists replaced `items` outright, silently throwing away an
     // in-progress reorder or duration edit with no way to get it back.
-    if (dirty && !confirm('Discard unsaved changes to the current playlist?')) return;
+    if (dirty && !await ui.ask('Discard unsaved changes to the current playlist?')) return;
     const data = await api<{ items: PlaylistItem[] }>(`/api/playlists/${id}`);
     setSelected(id);
     setItems(data.items);
@@ -108,7 +110,7 @@ export function Playlists({ company, canEdit }: { company: Company; canEdit: boo
             </button>
           </div>
         )}
-        <table>
+        <div className="table-wrap"><table>
           <thead><tr><th>Name</th><th>Items</th><th></th></tr></thead>
           <tbody>
             {playlists.map((p) => (
@@ -121,7 +123,7 @@ export function Playlists({ company, canEdit }: { company: Company; canEdit: boo
                     {canEdit && (
                       <button className="secondary"
                         onClick={async () => {
-                          const name = window.prompt('Rename playlist:', p.name);
+                          const name = await ui.input('Rename playlist:', p.name);
                           if (name?.trim()) {
                             await api(`/api/playlists/${p.id}`, { method: 'PATCH', body: { name: name.trim() } });
                             await load();
@@ -145,7 +147,7 @@ export function Playlists({ company, canEdit }: { company: Company; canEdit: boo
                           } catch {
                             /* the plain confirm below still protects against a misclick */
                           }
-                          if (confirm(`Delete playlist "${p.name}"?${warning}`)) {
+                          if (await ui.ask(`Delete playlist "${p.name}"?${warning}`)) {
                             if (selected === p.id) setSelected(null);
                             await api(`/api/playlists/${p.id}`, { method: 'DELETE' });
                             await load();
@@ -160,7 +162,7 @@ export function Playlists({ company, canEdit }: { company: Company; canEdit: boo
             ))}
             {playlists.length === 0 && <tr><td colSpan={3} className="muted">No playlists yet.</td></tr>}
           </tbody>
-        </table>
+        </table></div>
       </div>
 
       {selected && (
@@ -215,7 +217,7 @@ export function Playlists({ company, canEdit }: { company: Company; canEdit: boo
               </button>
             </div>
           )}
-          <table>
+          <div className="table-wrap"><table>
             <thead><tr><th>#</th><th>Item</th><th>Duration (seconds)</th><th>Enabled</th><th>Muted</th>{canEdit && <th></th>}</tr></thead>
             <tbody>
               {items.map((item, index) => (
@@ -313,7 +315,7 @@ export function Playlists({ company, canEdit }: { company: Company; canEdit: boo
               ))}
               {items.length === 0 && <tr><td colSpan={6} className="muted">Empty playlist - add media above.</td></tr>}
             </tbody>
-          </table>
+          </table></div>
         </div>
       )}
     </>
