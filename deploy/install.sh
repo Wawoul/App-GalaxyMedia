@@ -130,6 +130,21 @@ cd "$APP_DIR/server" && npm ci && npm run build
 cd "$APP_DIR/admin" && npm ci && npm run build
 chown -R galaxy:galaxy "$APP_DIR"
 
+echo "==> Deploy scripts"
+# The nightly backup timer runs $APP_DIR/deploy/backup.sh, but nothing here ever put it
+# there - on a fresh install the timer fired and failed until the first update.sh. And
+# these are root-owned on purpose: root runs them, so the app user must not be able to
+# edit them (that would be a path from a compromised API to root).
+rm -rf "$APP_DIR/deploy"
+mkdir -p "$APP_DIR/deploy"
+cp -a "$REPO_DIR/deploy/." "$APP_DIR/deploy/"
+chown -R root:root "$APP_DIR/deploy"
+chmod 755 "$APP_DIR/deploy/"*.sh
+# The folder holding it matters too: whoever owns a directory can rename or replace
+# anything inside it, root-owned contents or not. The app only reads from here.
+chown root:root "$APP_DIR"
+chmod 755 "$APP_DIR"
+
 echo "==> systemd + nightly backups"
 cp "$REPO_DIR/deploy/galaxy-api.service" /etc/systemd/system/
 cp "$REPO_DIR/deploy/galaxy-backup.service" /etc/systemd/system/

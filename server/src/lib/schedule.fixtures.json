@@ -1,0 +1,23 @@
+{
+  "_comment": "Shared conformance cases for the schedule rules. The server (TypeScript, lib/schedule.ts), the web player (a byte-identical copy) and the Android player (Schedule.kt) must all agree on every case. 'now' is local wall-clock in the screen's timezone. 2026-07-06 is a Monday. Entry fields default to null/0/weekInterval 1 when omitted.",
+  "cases": [
+    { "name": "no constraints is always active", "entries": [{ "id": "a" }], "now": { "dateStr": "2026-07-06", "dayOfWeek": 1, "minutes": 540 }, "expect": "a" },
+    { "name": "wrong day of week", "entries": [{ "id": "a", "daysOfWeek": [2, 3] }], "now": { "dateStr": "2026-07-06", "dayOfWeek": 1, "minutes": 540 }, "expect": null },
+    { "name": "inside a same-day window", "entries": [{ "id": "a", "startTime": "07:00", "endTime": "11:00" }], "now": { "dateStr": "2026-07-06", "dayOfWeek": 1, "minutes": 540 }, "expect": "a" },
+    { "name": "window end is exclusive", "entries": [{ "id": "a", "startTime": "07:00", "endTime": "09:00" }], "now": { "dateStr": "2026-07-06", "dayOfWeek": 1, "minutes": 540 }, "expect": null },
+    { "name": "overnight window, evening side", "entries": [{ "id": "a", "startTime": "22:00", "endTime": "02:00" }], "now": { "dateStr": "2026-07-06", "dayOfWeek": 1, "minutes": 1380 }, "expect": "a" },
+    { "name": "overnight window, gap in the day", "entries": [{ "id": "a", "startTime": "22:00", "endTime": "02:00" }], "now": { "dateStr": "2026-07-06", "dayOfWeek": 1, "minutes": 720 }, "expect": null },
+    { "name": "Monday-only overnight window still plays at Tuesday 00:30", "entries": [{ "id": "a", "daysOfWeek": [1], "startTime": "22:00", "endTime": "02:00" }], "now": { "dateStr": "2026-07-07", "dayOfWeek": 2, "minutes": 30 }, "expect": "a" },
+    { "name": "Monday-only overnight window is not a Tuesday-night window", "entries": [{ "id": "a", "daysOfWeek": [1], "startTime": "22:00", "endTime": "02:00" }], "now": { "dateStr": "2026-07-07", "dayOfWeek": 2, "minutes": 1380 }, "expect": null },
+    { "name": "overnight window honours an end date on the day it started", "entries": [{ "id": "a", "endDate": "2026-07-06", "startTime": "22:00", "endTime": "02:00" }], "now": { "dateStr": "2026-07-07", "dayOfWeek": 2, "minutes": 30 }, "expect": "a" },
+    { "name": "before the start date", "entries": [{ "id": "a", "startDate": "2026-07-07" }], "now": { "dateStr": "2026-07-06", "dayOfWeek": 1, "minutes": 540 }, "expect": null },
+    { "name": "bi-weekly: anchor week runs", "entries": [{ "id": "a", "startDate": "2026-07-06", "weekInterval": 2 }], "now": { "dateStr": "2026-07-08", "dayOfWeek": 3, "minutes": 540 }, "expect": "a" },
+    { "name": "bi-weekly: the off week does not", "entries": [{ "id": "a", "startDate": "2026-07-06", "weekInterval": 2 }], "now": { "dateStr": "2026-07-15", "dayOfWeek": 3, "minutes": 540 }, "expect": null },
+    { "name": "bi-weekly: runs again two weeks later", "entries": [{ "id": "a", "startDate": "2026-07-06", "weekInterval": 2 }], "now": { "dateStr": "2026-07-22", "dayOfWeek": 3, "minutes": 540 }, "expect": "a" },
+    { "name": "higher priority wins", "entries": [{ "id": "low", "priority": 0 }, { "id": "high", "priority": 5 }], "now": { "dateStr": "2026-07-06", "dayOfWeek": 1, "minutes": 540 }, "expect": "high" },
+    { "name": "direct beats group at equal priority", "entries": [{ "id": "group", "isDirect": false }, { "id": "direct", "isDirect": true }], "now": { "dateStr": "2026-07-06", "dayOfWeek": 1, "minutes": 540 }, "expect": "direct" },
+    { "name": "priority beats direct", "entries": [{ "id": "direct", "isDirect": true, "priority": 0 }, { "id": "group", "isDirect": false, "priority": 1 }], "now": { "dateStr": "2026-07-06", "dayOfWeek": 1, "minutes": 540 }, "expect": "group" },
+    { "name": "newest wins when all else is equal", "entries": [{ "id": "old", "createdAt": "2026-01-01T00:00:00Z" }, { "id": "new", "createdAt": "2026-06-01T00:00:00Z" }], "now": { "dateStr": "2026-07-06", "dayOfWeek": 1, "minutes": 540 }, "expect": "new" },
+    { "name": "nothing scheduled", "entries": [], "now": { "dateStr": "2026-07-06", "dayOfWeek": 1, "minutes": 540 }, "expect": null }
+  ]
+}

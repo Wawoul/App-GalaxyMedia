@@ -9,8 +9,9 @@ import { z } from 'zod';
 import { config, SIGNED_URL_TTL_S } from '../config.js';
 import { query, withTransaction } from '../db/pool.js';
 import { audit } from '../lib/audit.js';
-import { signDownload, verifyDownload } from '../lib/crypto.js';
+import { signDownload, stableExpiry, verifyDownload } from '../lib/crypto.js';
 import { canAccessCompany } from '../lib/permissions.js';
+import { checkRoom } from '../lib/quota.js';
 import { fetchRemoteFile } from '../lib/fetchUrl.js';
 import {
   activeCountForCompany,
@@ -71,12 +72,15 @@ async function storeMediaStream(opts: {
     },
   });
 
+  // Set once the file has its final name, so a later failure can remove THAT file too.
+  let storedPath: string | null = null;
   try {
     await pipeline(opts.source, tap, createWriteStream(tmpFile, { flags: 'wx', mode: 0o640 }));
     const sniffed = sniffMediaType(head);
     if (!sniffed) throw Object.assign(new Error('unsupported_type'), { statusCode: 415 });
 
-    await rename(tmpFile, mediaPath(opts.companyId, mediaId, sniffed.ext));
+    storedPath = mediaPath(opts.companyId, mediaId, sniffed.ext);
+    await rename(tmpFile, storedPath);
     const { rows } = await query(
       `INSERT INTO media (id, company_id, kind, original_name, mime, size_bytes, sha256, folder_id, created_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -96,8 +100,19 @@ async function storeMediaStream(opts: {
     return rows[0]!;
   } catch (err) {
     await unlink(tmpFile).catch(() => {});
+    // If the rename had already happened, the temp name no longer exists and the
+    // file now lives under its final one - with no row pointing at it. Without this
+    // every failed insert leaked a full-size orphan that nothing would ever collect.
+    if (storedPath) await unlink(storedPath).catch(() => {});
     throw err;
   }
+}
+
+/** The reply for a refused upload: the company's own cap, or the shared disk running low. */
+function roomError(room: 'quota' | 'disk'): { status: number; error: string } {
+  return room === 'quota'
+    ? { status: 413, error: 'quota_exceeded' }
+    : { status: 507, error: 'server_disk_full' };
 }
 
 export function mediaRoutes(app: FastifyInstance): void {
@@ -144,7 +159,7 @@ export function mediaRoutes(app: FastifyInstance): void {
         'SELECT id, kind, original_name, mime, size_bytes, sha256, folder_id, created_at FROM media WHERE company_id = $1 ORDER BY created_at DESC',
         [companyId],
       );
-      const expires = Math.floor(Date.now() / 1000) + SIGNED_URL_TTL_S;
+      const expires = stableExpiry(SIGNED_URL_TTL_S);
       return reply.send(
         rows.map((m) => ({
           ...m,
@@ -321,6 +336,11 @@ export function mediaRoutes(app: FastifyInstance): void {
       if (!canAccessCompany(req.principal!, source.company_id, 'editor')) {
         return reply.code(403).send({ error: 'forbidden' });
       }
+      const room = await checkRoom(source.company_id, Number(source.size_bytes));
+      if (room !== 'ok') {
+        const { status, error } = roomError(room);
+        return reply.code(status).send({ error });
+      }
       const newId = randomUUID();
       const ext = extFromMime(source.mime);
       await copyFile(mediaPath(source.company_id, id, ext), mediaPath(source.company_id, newId, ext));
@@ -391,7 +411,21 @@ export function mediaRoutes(app: FastifyInstance): void {
       // Open the connection before replying, so an unreachable link or a
       // blocked address is reported straight away rather than as a job that
       // fails a moment later.
+      // Same room check as an upload: once before connecting (a full company or disk
+      // should not even open the connection)...
+      const roomBefore = await checkRoom(companyId, 0);
+      if (roomBefore !== 'ok') {
+        const { status, error } = roomError(roomBefore);
+        return reply.code(status).send({ error });
+      }
       const remote = await fetchRemoteFile(body.url, { maxBytes });
+      // ...and again once the source has declared how big the file is.
+      const roomAfter = await checkRoom(companyId, remote.declaredBytes ?? 0);
+      if (roomAfter !== 'ok') {
+        void (remote.body as unknown as { cancel?: () => Promise<void> }).cancel?.();
+        const { status, error } = roomError(roomAfter);
+        return reply.code(status).send({ error });
+      }
 
       // Captured now: the callbacks below run minutes after this request has
       // been answered, and reaching into `req` at that point is reading state
@@ -470,6 +504,14 @@ export function mediaRoutes(app: FastifyInstance): void {
       if (!canAccessCompany(req.principal!, companyId, 'editor')) {
         return reply.code(403).send({ error: 'forbidden' });
       }
+      // Refuse before reading a byte of the body. Content-Length is an upper bound for
+      // the file (it includes the multipart framing), which is what we need here.
+      const room = await checkRoom(companyId, Number(req.headers['content-length']));
+      if (room !== 'ok') {
+        const { status, error } = roomError(room);
+        return reply.code(status).send({ error });
+      }
+
       const part = await req.file();
       if (!part) return reply.code(400).send({ error: 'no_file' });
 

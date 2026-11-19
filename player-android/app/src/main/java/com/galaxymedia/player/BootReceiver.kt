@@ -21,6 +21,10 @@ class BootReceiver : BroadcastReceiver() {
         ) {
             // Re-arm the watchdog first: if the activity start below is refused,
             // this is what brings the screen back a few minutes later.
+            // Mark alive NOW. Staleness is measured from the last mark, and the last
+            // one was written before the reboot; without a fresh mark the watchdog
+            // could not tell "app never started after boot" from "app is fine".
+            runCatching { Watchdog.markAlive(context) }
             runCatching { Watchdog.schedule(context) }
             // specialUse (not mediaPlayback) precisely so this is allowed from a
             // BOOT_COMPLETED receiver on Android 15.

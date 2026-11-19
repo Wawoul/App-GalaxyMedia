@@ -38,6 +38,9 @@ services:
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-512}
+      # Address (or network) of the reverse proxy in front of this container, so rate
+      # limits and the audit log see real visitors. See .env.example.
+      TRUST_PROXY: ${TRUST_PROXY:-127.0.0.1}
     volumes:
       - media-data:/data
     healthcheck:

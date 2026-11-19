@@ -1,5 +1,7 @@
+import dns from 'node:dns';
 import { lookup } from 'node:dns/promises';
 import net from 'node:net';
+import { Agent, fetch as undiciFetch } from 'undici';
 
 /**
  * Guarded fetching for admin-supplied URLs (media import).
@@ -117,6 +119,45 @@ function badUrl(message: string): Error & { statusCode: number } {
   return Object.assign(new Error(message), { statusCode: 400 });
 }
 
+type ResolvedAddress = { address: string; family: number };
+type Resolver = (
+  hostname: string,
+  options: { all: true },
+  callback: (err: NodeJS.ErrnoException | null, addresses?: ResolvedAddress[]) => void,
+) => void;
+
+/**
+ * A DNS lookup that refuses private answers, for use at CONNECTION time.
+ *
+ * assertPublicHost() resolves the hostname up front, but the HTTP client then
+ * resolves it AGAIN when it connects. A hostile DNS server can answer the first
+ * with a public address and the second with 127.0.0.1 (DNS rebinding), walking
+ * straight past a check that only ran once. Plugging this into the connection
+ * itself validates the very answer that is about to be connected to - including
+ * on every redirect hop, since each opens its own connection. (IP literals skip
+ * DNS entirely; assertPublicHost covers those.)
+ */
+export function guardedLookup(resolve: Resolver = dns.lookup as unknown as Resolver) {
+  return (
+    hostname: string,
+    options: { all?: boolean; [key: string]: unknown },
+    callback: (err: Error | null, address?: string | ResolvedAddress[], family?: number) => void,
+  ): void => {
+    resolve(hostname, { ...options, all: true }, (err, addresses) => {
+      if (err) return callback(err);
+      const list = addresses ?? [];
+      if (list.length === 0) return callback(badUrl('could not resolve that hostname'));
+      // Every address, not just the first: a name that resolves to both a public
+      // and a private address must not get to pick the private one.
+      if (list.some((a) => isBlockedIp(a.address))) return callback(badUrl('that address is not reachable from here'));
+      if (options.all) callback(null, list);
+      else callback(null, list[0]!.address, list[0]!.family);
+    });
+  };
+}
+
+export const guardedAgent = new Agent({ connect: { lookup: guardedLookup() as never } });
+
 /**
  * Some services hand out a "preview" page rather than the file. Rewriting the
  * common ones means an admin can paste the link they actually have, instead of
@@ -177,10 +218,11 @@ export async function fetchRemoteFile(
     }
     await assertPublicHost(url.hostname);
 
-    const response = await fetch(url, {
+    const response = await undiciFetch(url, {
       redirect: 'manual', // hop-by-hop, so each destination is re-validated
       signal: AbortSignal.timeout(timeout),
       headers: { accept: '*/*' },
+      dispatcher: guardedAgent, // re-checks the address at connect time (DNS rebinding)
     }).catch((err: unknown) => {
       const reason = err instanceof Error ? err.message : 'request failed';
       throw badUrl(`could not fetch that link (${reason})`);
@@ -220,10 +262,18 @@ export async function fetchRemoteFile(
   throw badUrl('that link redirected too many times');
 }
 
-function suggestedNameFrom(disposition: string | null, url: URL): string {
+export function suggestedNameFrom(disposition: string | null, url: URL): string {
   const fromHeader = disposition?.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i)?.[1];
   const candidate = fromHeader ?? url.pathname.split('/').filter(Boolean).pop() ?? 'import';
+  // decodeURIComponent throws on a bare '%' ("50%_off.mp4"), which used to turn a
+  // perfectly good download into a 500. A name that does not decode is used as-is.
+  let decoded = candidate;
+  try {
+    decoded = decodeURIComponent(candidate);
+  } catch {
+    /* not percent-encoded after all */
+  }
   // Strip any path components a hostile filename might carry.
-  const safe = decodeURIComponent(candidate).replace(/[/\\]/g, '').trim();
+  const safe = decoded.replace(/[/\\]/g, '').trim();
   return safe.slice(0, 300) || 'import';
 }

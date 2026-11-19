@@ -133,7 +133,19 @@ export function Playlists({ company, canEdit }: { company: Company; canEdit: boo
                     {canEdit && (
                       <button className="danger"
                         onClick={async () => {
-                          if (confirm(`Delete playlist "${p.name}"?`)) {
+                          // Say what the delete takes with it before asking.
+                          let warning = '';
+                          try {
+                            const u = await api<{ assignments: number; layouts: number }>(`/api/playlists/${p.id}/usage`);
+                            const parts = [
+                              u.assignments > 0 && `${u.assignments} schedule slot${u.assignments === 1 ? '' : 's'} (they will be removed)`,
+                              u.layouts > 0 && `${u.layouts} layout${u.layouts === 1 ? '' : 's'} (that zone will be left empty)`,
+                            ].filter(Boolean);
+                            if (parts.length) warning = `\n\nIt is in use by ${parts.join(' and ')}.`;
+                          } catch {
+                            /* the plain confirm below still protects against a misclick */
+                          }
+                          if (confirm(`Delete playlist "${p.name}"?${warning}`)) {
                             if (selected === p.id) setSelected(null);
                             await api(`/api/playlists/${p.id}`, { method: 'DELETE' });
                             await load();

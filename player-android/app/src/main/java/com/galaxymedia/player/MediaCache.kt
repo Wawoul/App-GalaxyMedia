@@ -38,21 +38,37 @@ class MediaCache(context: Context, private val http: OkHttpClient) {
     }
 
     /**
-     * Forget past failures so every item is retried immediately. Called when the
-     * manifest changes: the signed URLs are new, so a previous failure says
-     * nothing about whether this attempt will work, and an hour-long backoff
-     * would otherwise leave a fixed screen dark long after the fix.
+     * Called on every manifest sync. Forgets only the failures a FRESH URL can
+     * fix - an expired or rejected token (HTTP 401/403) - so those retry at once.
+     *
+     * It used to clear everything. A sync runs every minute and every manifest
+     * carries new signed URLs, so that wiped the backoff each time: an item that
+     * could never succeed (checksum mismatch, truncated file on the server) was
+     * downloaded IN FULL once a minute, forever - hundreds of GB a day for a
+     * big video, on every screen. Failures a new URL cannot fix keep backing
+     * off; [forgetAllFailures] is the explicit "try everything again".
      */
     fun resetFailures() {
+        failures.values.removeAll { it.freshUrlHelps }
+    }
+
+    /** A tech asked for a reload or a cache clear: retry everything now. */
+    fun forgetAllFailures() {
         failures.clear()
     }
 
     /** Per-item download failure state, for exponential backoff. */
-    private class Failure(var count: Int, var retryAt: Long)
-    private val failures = mutableMapOf<String, Failure>()
+    private class Failure(var count: Int, var retryAt: Long, var freshUrlHelps: Boolean = false)
+    // Concurrent: resetFailures() is called from the main thread while syncAll()
+    // runs on an IO thread.
+    private val failures = java.util.concurrent.ConcurrentHashMap<String, Failure>()
 
-    private fun noteFailure(mediaId: String) {
+    /** The server answered the download with a non-2xx status. */
+    private class DownloadHttpException(val code: Int) : Exception("download $code")
+
+    private fun noteFailure(mediaId: String, freshUrlHelps: Boolean = false) {
         val failure = failures.getOrPut(mediaId) { Failure(0, 0L) }
+        failure.freshUrlHelps = freshUrlHelps
         failure.count += 1
         // 1min, 2, 4 ... capped at an hour. Long enough that a broken item costs
         // almost nothing, short enough that a transient outage recovers quickly.
@@ -68,7 +84,14 @@ class MediaCache(context: Context, private val http: OkHttpClient) {
 
     fun isCached(item: ManifestItem): Boolean {
         val mediaId = item.mediaId ?: return false
-        return File(dir, "$mediaId.bin").let { it.exists() && it.length() > 0 }
+        val file = File(dir, "$mediaId.bin")
+        if (!file.exists() || file.length() == 0L) return false
+        // "Non-empty" is not "intact". A TV that loses power mid-write can leave a
+        // file that exists but is the wrong length, and trusting it meant that item
+        // failed to play for ever with nothing to trigger a re-download. When the
+        // server told us the size, the file must match it.
+        val expected = item.sizeBytes
+        return expected == null || expected <= 0L || file.length() == expected
     }
 
     /**
@@ -79,10 +102,10 @@ class MediaCache(context: Context, private val http: OkHttpClient) {
         items: List<ManifestItem>,
         onProgress: ((percent: Int) -> Unit)? = null,
     ) = syncMutex.withLock { withContext(Dispatchers.IO) {
+        // Same test the player uses, so a damaged file is re-downloaded rather than
+        // treated as present by the sync and as absent by the player.
         val missing = items.filter { item ->
-            val mediaId = item.mediaId
-            mediaId != null && item.url != null &&
-                !File(dir, "$mediaId.bin").let { it.exists() && it.length() > 0 }
+            item.mediaId != null && item.url != null && !isCached(item)
         }
         val totalBytes = missing.sumOf { it.sizeBytes ?: 0L }.coerceAtLeast(1L)
         var doneBytes = 0L
@@ -113,7 +136,7 @@ class MediaCache(context: Context, private val http: OkHttpClient) {
             }
             runCatching {
                 http.newCall(Request.Builder().url(item.url!!).build()).execute().use { response ->
-                    check(response.isSuccessful) { "download ${response.code}" }
+                    if (!response.isSuccessful) throw DownloadHttpException(response.code)
                     tmp.outputStream().use { out ->
                         val input = response.bodyOrThrow().byteStream()
                         val buffer = ByteArray(64 * 1024)
@@ -131,6 +154,12 @@ class MediaCache(context: Context, private val http: OkHttpClient) {
                                 onProgress?.invoke(percent)
                             }
                         }
+                        // Force the bytes to storage BEFORE the rename below. Without it
+                        // the file can be renamed into place while its data is still in
+                        // the OS cache, and a power cut (routine for a TV) leaves a
+                        // correctly-named file full of zeros.
+                        out.flush()
+                        out.fd.sync()
                     }
                 }
                 val expected = item.sha256
@@ -152,7 +181,10 @@ class MediaCache(context: Context, private val http: OkHttpClient) {
                 failures.remove(mediaId)
             }.onFailure { err ->
                 tmp.delete()
-                noteFailure(mediaId)
+                // An expired/rejected token is fixed by the next manifest's fresh
+                // URL; anything else (bad checksum, 404, a stall) is not.
+                val code = (err as? DownloadHttpException)?.code
+                noteFailure(mediaId, freshUrlHelps = code == 401 || code == 403)
                 // Surface WHY. A download that keeps failing leaves the screen
                 // with nothing to play and looks identical, from the dashboard,
                 // to a screen that is simply idle - so without this the only way
@@ -175,6 +207,7 @@ class MediaCache(context: Context, private val http: OkHttpClient) {
 
     fun clear() {
         dir.listFiles()?.forEach { it.delete() }
+        failures.clear() // a clean slate means every item is retried
     }
 
     fun freeSpaceMb(): Int = (dir.usableSpace / (1024 * 1024)).toInt()

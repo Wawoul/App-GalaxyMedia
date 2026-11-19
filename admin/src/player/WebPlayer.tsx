@@ -90,7 +90,7 @@ async function deviceFetch(path: string, init?: RequestInit): Promise<Response> 
 
 // ── Item renderers ────────────────────────────────────────────────────────────
 
-function StreamVideo({ item, onFailed }: { item: Item; onFailed?: () => void }) {
+function StreamVideo({ item, url, onFailed }: { item: Item; url: string; onFailed?: () => void }) {
   const ref = useRef<HTMLVideoElement>(null);
   // Held in a ref so the effect below doesn't re-run when the caller passes a
   // fresh closure on every render.
@@ -98,9 +98,9 @@ function StreamVideo({ item, onFailed }: { item: Item; onFailed?: () => void }) 
   failed.current = onFailed;
   useEffect(() => {
     const video = ref.current;
-    if (!video || !item.url) return;
+    if (!video || !url) return;
     if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      video.src = item.url; // Safari plays HLS natively
+      video.src = url; // Safari plays HLS natively
       return;
     }
     const hls = new Hls();
@@ -109,10 +109,10 @@ function StreamVideo({ item, onFailed }: { item: Item; onFailed?: () => void }) 
     hls.on(Hls.Events.ERROR, (_event, data) => {
       if (data.fatal) failed.current?.();
     });
-    hls.loadSource(item.url);
+    hls.loadSource(url);
     hls.attachMedia(video);
     return () => hls.destroy();
-  }, [item.url]);
+  }, [url]);
   return (
     <video ref={ref} autoPlay muted={item.muted ?? false} style={fill}
       onError={() => failed.current?.()} />
@@ -131,6 +131,20 @@ function PlaylistView({
 }) {
   const [index, setIndex] = useState(0);
   const items = playlist.items;
+  // What the playlist IS, ignoring the signed-URL tokens that change between
+  // syncs. Keying on the items array's identity restarted the whole loop at
+  // item 0 on every sync (each manifest parses into brand-new arrays), so any
+  // item longer than the 60s sync interval could never finish.
+  const contentKey = items.map((i) => `${i.id}:${i.durationMs ?? ''}`).join('|');
+  // The URL each item started playing with. Swapping a <video>'s src mid-play
+  // restarts it, and every sync carries fresh tokens, so the first URL is kept
+  // until it actually fails (an expired token) and is then replaced once.
+  const pinned = useRef(new Map<string, string>());
+  const [, rerender] = useState(0);
+  const urlOf = (it: Item): string => {
+    if (!pinned.current.has(it.id)) pinned.current.set(it.id, it.url ?? '');
+    return pinned.current.get(it.id)!;
+  };
   // items[index % 0] is NaN-indexed and yields undefined; guard so an empty
   // playlist renders nothing rather than silently indexing garbage.
   const item = items.length > 0 ? items[index % items.length] : undefined;
@@ -140,12 +154,23 @@ function PlaylistView({
   // and the modulo would play the wrong item.
   useEffect(() => {
     setIndex(0);
-  }, [playlist.id, items]);
+    // Forget pinned URLs of items that are no longer in the playlist.
+    const live = new Set(items.map((i) => i.id));
+    for (const id of [...pinned.current.keys()]) if (!live.has(id)) pinned.current.delete(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playlist.id, contentKey]);
 
   // Advancing after a failed item goes through here so it can't happen instantly.
   // With an expired manifest every item errors on mount, and a zero-delay advance
   // spins the whole playlist as fast as React can render - 100% CPU on a Pi.
-  const advanceAfterError = () => {
+  const advanceAfterError = (failedItem?: Item) => {
+    // The usual cause is an expired token on the pinned URL: retry once with
+    // the latest one before giving up on the item.
+    if (failedItem?.url && pinned.current.get(failedItem.id) !== failedItem.url) {
+      pinned.current.set(failedItem.id, failedItem.url);
+      rerender((n) => n + 1);
+      return;
+    }
     setTimeout(() => setIndex((i) => i + 1), 5_000);
   };
 
@@ -165,25 +190,29 @@ function PlaylistView({
     // onItem is a caller-supplied callback that changes identity every render;
     // including it would restart the timer continuously.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [index, playlist.id, item]);
+    // Keyed on the item's identity, not the object: a sync hands back new item
+    // objects with the same content, which must not restart the timer or log
+    // the same play again.
+  }, [index, playlist.id, item?.id, item?.durationMs]);
 
   if (!item?.url) return null;
+  const url = urlOf(item);
   if (item.type === 'image') {
-    return <img src={item.url} style={fill} alt="" onError={advanceAfterError} />;
+    return <img src={url} style={fill} alt="" onError={() => advanceAfterError(item)} />;
   }
   if (item.type === 'video') {
     return (
-      <video key={`${item.id}-${index}`} src={item.url} autoPlay muted={item.muted ?? false}
-        style={fill} onEnded={() => setIndex((i) => i + 1)} onError={advanceAfterError} />
+      <video key={`${item.id}-${index}`} src={url} autoPlay muted={item.muted ?? false}
+        style={fill} onEnded={() => setIndex((i) => i + 1)} onError={() => advanceAfterError(item)} />
     );
   }
-  if (isStream(item.url)) {
-    return <StreamVideo key={`${item.id}-${index}`} item={item} onFailed={advanceAfterError} />;
+  if (isStream(url)) {
+    return <StreamVideo key={`${item.id}-${index}`} item={item} url={url} onFailed={() => advanceAfterError(item)} />;
   }
   // Sandboxed: embedded pages are admin-chosen but still third-party, and
   // without this one could navigate the whole kiosk away via top.location.
   return (
-    <iframe key={`${item.id}-${index}`} src={item.url} style={fill} title="content"
+    <iframe key={`${item.id}-${index}`} src={url} style={fill} title="content"
       sandbox="allow-scripts allow-same-origin" />
   );
 }
@@ -260,11 +289,16 @@ export function WebPlayer() {
     (async () => {
       while (!stop) {
         try {
-          const reg = (await (await fetch('/api/device/register', {
+          const regRes = await fetch('/api/device/register', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: '{}',
-          })).json()) as { requestId: string; code: string; expiresInS: number; pollIntervalS: number };
+          });
+          // A 429/5xx body has no `code`, so without this the loop treated it as
+          // a registration, saw a NaN deadline and immediately registered again -
+          // hammering the rate-limited endpoint flat out. Throw into the backoff.
+          if (!regRes.ok) throw new Error(`register ${regRes.status}`);
+          const reg = (await regRes.json()) as { requestId: string; code: string; expiresInS: number; pollIntervalS: number };
           if (stop) return;
           setPairCode(reg.code);
           const deadline = Date.now() + reg.expiresInS * 1000;
@@ -339,13 +373,29 @@ export function WebPlayer() {
       clearTimeout(retry);
       retry = setTimeout(connect, base / 2 + Math.random() * (base / 2));
     };
-    const connect = () => {
+    const connect = async () => {
       const token = localStorage.getItem(TOKEN_KEY);
       if (!token || closed) return;
+      // Trade the long-lived device token (sent in a header) for a one-minute
+      // ticket, so the token itself never appears in the socket URL - URLs end up
+      // in nginx access logs. Only a server that has no ticket endpoint (404, an
+      // older install) gets the old ?token= form; a ticket that merely failed to
+      // arrive is retried later, never worked around by exposing the token.
+      let credential: string;
+      try {
+        const res = await deviceFetch('/api/device/ws-ticket', { method: 'POST' });
+        if (res.status === 401) return unpair();
+        if (res.status === 404) credential = `token=${encodeURIComponent(token)}`;
+        else if (res.ok) credential = `ticket=${encodeURIComponent(((await res.json()) as { ticket: string }).ticket)}`;
+        else return scheduleReconnect();
+      } catch {
+        return scheduleReconnect();
+      }
+      if (closed) return;
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
       let socket: WebSocket;
       try {
-        socket = new WebSocket(`${proto}://${location.host}/api/device/ws?token=${token}`);
+        socket = new WebSocket(`${proto}://${location.host}/api/device/ws?${credential}`);
       } catch {
         // A throwing constructor (blocked/invalid URL) used to escape the effect
         // and end reconnection for the life of the page.
@@ -378,7 +428,7 @@ export function WebPlayer() {
         return 'This screen';
       }
     };
-    connect();
+    void connect();
     return () => {
       closed = true;
       ws?.close();

@@ -6,6 +6,8 @@ export interface Me {
   role: 'admin' | 'editor' | 'viewer';
   companyId: string | null;
   companyAccess: string[];
+  /** An administrator chose this password; the server blocks everything else until it is replaced. */
+  mustChangePassword: boolean;
 }
 
 export interface Company {

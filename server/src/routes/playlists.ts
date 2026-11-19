@@ -3,13 +3,14 @@ import { z } from 'zod';
 import { query, withTransaction } from '../db/pool.js';
 import { audit } from '../lib/audit.js';
 import { canAccessCompany } from '../lib/permissions.js';
+import { itemUrlSchema } from '../lib/urls.js';
 import { requireUser } from '../plugins/auth.js';
 import { notifyCompany } from '../ws.js';
 
 const itemSchema = z
   .object({
     mediaId: z.string().uuid().nullish(),
-    url: z.string().url().max(2000).nullish(),
+    url: itemUrlSchema.nullish(), // http(s) pages only - see lib/urls.ts
     durationMs: z.number().int().min(1000).max(24 * 3600 * 1000).nullish(),
     enabled: z.boolean().default(true),
     muted: z.boolean().default(false),
@@ -116,6 +117,24 @@ export function playlistRoutes(app: FastifyInstance): void {
     const body = z.object({ name: z.string().trim().min(1).max(200) }).parse(req.body);
     await query('UPDATE playlists SET name = $2 WHERE id = $1', [id, body.name]);
     return reply.send({ ok: true });
+  });
+
+  // What deleting this playlist would break. Deleting cascades to its schedule slots,
+  // and layouts that show it are left with an empty zone - silently, until now. The
+  // admin asks this before confirming the delete.
+  app.get('/api/playlists/:id/usage', async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const companyId = await playlistCompany(id);
+    if (!companyId) return reply.code(404).send({ error: 'not_found' });
+    if (!canAccessCompany(req.principal!, companyId, 'viewer')) {
+      return reply.code(403).send({ error: 'forbidden' });
+    }
+    const { rows } = await query<{ assignments: number; layouts: number }>(
+      `SELECT (SELECT count(*) FROM assignments WHERE playlist_id = $1)::int AS assignments,
+              (SELECT count(*) FROM layouts WHERE company_id = $2 AND zones::text LIKE '%' || $1::text || '%')::int AS layouts`,
+      [id, companyId],
+    );
+    return reply.send(rows[0]);
   });
 
   app.delete('/api/playlists/:id', async (req, reply) => {

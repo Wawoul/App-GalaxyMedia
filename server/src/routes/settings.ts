@@ -4,6 +4,7 @@ import { getAlertSettings, saveAlertSettings, sendAlert } from '../alerts.js';
 import { audit } from '../lib/audit.js';
 import { encrypt } from '../lib/crypto.js';
 import { isMspAdmin } from '../lib/permissions.js';
+import { emailListSchema } from '../lib/validators.js';
 import { requireUser } from '../plugins/auth.js';
 
 export function settingsRoutes(app: FastifyInstance): void {
@@ -37,7 +38,7 @@ export function settingsRoutes(app: FastifyInstance): void {
         smtpUser: z.string().trim().max(200).default(''),
         smtpPass: z.string().max(500).nullish(), // null/undefined = keep existing; '' = clear
         smtpFrom: z.string().trim().max(200).default(''),
-        alertEmails: z.string().trim().max(1000).default(''),
+        alertEmails: emailListSchema.default(''),
         telegramToken: z.string().trim().max(200).nullish(),
         telegramChatId: z.string().trim().max(100).default(''),
         offlineAlertMinutes: z.number().int().min(1).max(1440).default(5),

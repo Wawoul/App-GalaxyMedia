@@ -2,6 +2,36 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, uploadWithProgress } from '../api';
 import type { Company, Folder, MediaItem } from '../types';
 
+/**
+ * A video thumbnail that only starts loading once it scrolls near the viewport. With
+ * preload="metadata" on every tile, opening a large library fired one request per video
+ * straight away (and kept the ones further down the page loading while you looked at the top).
+ */
+function LazyVideoThumb({ src }: { src: string }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  const [near, setNear] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || near) return;
+    if (typeof IntersectionObserver === 'undefined') {
+      setNear(true);
+      return;
+    }
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setNear(true);
+          io.disconnect();
+        }
+      },
+      { rootMargin: '200px' },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [near]);
+  return <video ref={ref} className="thumb" src={near ? src : undefined} muted preload={near ? 'metadata' : 'none'} />;
+}
+
 function formatSize(bytes: number): string {
   if (bytes > 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
   if (bytes > 1e6) return `${(bytes / 1e6).toFixed(1)} MB`;
@@ -298,7 +328,7 @@ export function Media({ company, canEdit }: { company: Company; canEdit: boolean
                 <td>
                   {m.kind === 'image'
                     ? <img className="thumb" src={m.url} alt="" loading="lazy" />
-                    : <video className="thumb" src={m.url} muted preload="metadata" />}
+                    : <LazyVideoThumb src={m.url} />}
                 </td>
                 <td>{m.original_name}</td>
                 <td className="muted">{m.mime}</td>

@@ -35,11 +35,13 @@ export async function buildServer(): Promise<FastifyInstance> {
     logger: config.NODE_ENV === 'test'
       ? false
       : { level: config.NODE_ENV === 'production' ? 'info' : 'debug' },
-    // Trust exactly one hop (nginx on localhost). `true` would trust the whole
-    // XFF chain and take the client-supplied leftmost entry as req.ip, which
-    // nginx's `$proxy_add_x_forwarded_for` (append, not replace) lets a client
-    // spoof - defeating IP-based rate limits like the pairing-code guard.
-    trustProxy: 1,
+    // Trust the proxy by ADDRESS (nginx on localhost by default; see config.ts).
+    // `true` would trust the whole XFF chain and take the client-supplied leftmost
+    // entry as req.ip, which nginx's `$proxy_add_x_forwarded_for` (append, not
+    // replace) lets a client spoof - defeating IP-based rate limits like the
+    // pairing-code guard. A bare hop count was the previous answer, but it cannot
+    // check who the immediate peer is, so Fastify 5.12+ no longer allows it.
+    trustProxy: config.TRUST_PROXY,
     bodyLimit: 1024 * 1024, // JSON bodies; uploads go through multipart limits
   });
 

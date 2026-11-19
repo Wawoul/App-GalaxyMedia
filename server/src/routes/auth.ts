@@ -2,15 +2,16 @@ import type { FastifyInstance } from 'fastify';
 import argon2 from 'argon2';
 import { authenticator } from 'otplib';
 import { z } from 'zod';
-import { query } from '../db/pool.js';
+import { query, withTransaction } from '../db/pool.js';
 import { audit } from '../lib/audit.js';
 import { decrypt, encrypt, randomToken, sha256Hex } from '../lib/crypto.js';
 import { signPending2fa, signUserToken, verifyToken } from '../lib/tokens.js';
 import { REFRESH_TOKEN_TTL_S } from '../config.js';
+import { lockoutSeconds } from '../lib/lockout.js';
 import { requireUser } from '../plugins/auth.js';
 
-const MAX_FAILED_LOGINS = 5;
-const LOCKOUT_BASE_S = 60; // doubles per extra failure
+// A token rotated this recently that is presented again is two tabs racing, not theft.
+const REFRESH_GRACE_S = 10;
 
 interface AuthUserRow {
   id: string;
@@ -62,8 +63,7 @@ export function authRoutes(app: FastifyInstance): void {
 
       if (!(await argon2.verify(user.password_hash, body.password))) {
         const failures = user.failed_logins + 1;
-        const lockSeconds =
-          failures >= MAX_FAILED_LOGINS ? LOCKOUT_BASE_S * 2 ** (failures - MAX_FAILED_LOGINS) : 0;
+        const lockSeconds = lockoutSeconds(failures); // capped - see lib/lockout.ts
         await query(
           `UPDATE users SET failed_logins = $2,
              locked_until = CASE WHEN $3 > 0 THEN now() + make_interval(secs => $3) ELSE NULL END
@@ -186,7 +186,7 @@ export function authRoutes(app: FastifyInstance): void {
       const body = z.object({ refreshToken: z.string() }).parse(req.body);
       const hash = sha256Hex(body.refreshToken);
       const { rows } = await query<{ id: string; user_id: string }>(
-        `UPDATE refresh_tokens SET revoked = true
+        `UPDATE refresh_tokens SET revoked = true, revoked_at = now()
          WHERE token_hash = $1 AND NOT revoked AND expires_at > now()
          RETURNING id, user_id`,
         [hash],
@@ -197,11 +197,22 @@ export function authRoutes(app: FastifyInstance): void {
         // either this client replaying, or a thief racing the legitimate user.
         // Can't tell which, so drop every live session for that user and make
         // them sign in again; a thief keeping a valid chain is the worse outcome.
-        const { rows: reused } = await query<{ user_id: string }>(
-          'SELECT user_id FROM refresh_tokens WHERE token_hash = $1',
-          [hash],
+        //
+        // Two refinements. Only a ROTATED token (revoked_at set) can signal theft:
+        // one revoked for any other reason (logout, disable, password change) is
+        // already dead, so replaying it - say from a stale tab after a password
+        // change - gives nobody anything and must not kill the live sessions.
+        // And a token rotated seconds ago is two browser tabs restoring the same
+        // session at once, where revoking everything punished the winner too:
+        // refuse the loser quietly and leave the winner's new session alone.
+        const { rows: reused } = await query<{ user_id: string; rotated: boolean; in_grace: boolean }>(
+          `SELECT user_id,
+                  (revoked_at IS NOT NULL) AS rotated,
+                  (revoked_at IS NOT NULL AND revoked_at > now() - make_interval(secs => $2)) AS in_grace
+           FROM refresh_tokens WHERE token_hash = $1`,
+          [hash, REFRESH_GRACE_S],
         );
-        const victim = reused[0]?.user_id;
+        const victim = reused[0]?.rotated && !reused[0].in_grace ? reused[0].user_id : undefined;
         if (victim) {
           await query('UPDATE refresh_tokens SET revoked = true WHERE user_id = $1 AND NOT revoked', [
             victim,
@@ -225,6 +236,39 @@ export function authRoutes(app: FastifyInstance): void {
     return reply.send({ ok: true });
   });
 
+  // Change your own password. Needs the current one (a stolen session alone must
+  // not be enough to lock the owner out), ends every other session, and hands back
+  // a fresh one so the tab doing the change carries on. Also clears the "someone
+  // else chose this password" flag, which blocks everything else until done.
+  app.post(
+    '/api/auth/password',
+    { preHandler: requireUser, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
+    async (req, reply) => {
+      const p = req.principal!;
+      const body = z
+        .object({ currentPassword: z.string().min(1).max(200), newPassword: z.string().min(12).max(200) })
+        .parse(req.body);
+      if (body.newPassword === body.currentPassword) {
+        return reply.code(400).send({ error: 'new password must differ from the current one' });
+      }
+      const { rows } = await query<{ password_hash: string }>('SELECT password_hash FROM users WHERE id = $1', [p.id]);
+      if (!rows[0] || !(await argon2.verify(rows[0].password_hash, body.currentPassword))) {
+        audit({ userId: p.id, action: 'auth.password_change_failed', ip: req.ip });
+        return reply.code(401).send({ error: 'invalid_credentials' });
+      }
+      const newHash = await argon2.hash(body.newPassword, { type: argon2.argon2id });
+      await withTransaction(async (tx) => {
+        await tx.query(
+          'UPDATE users SET password_hash = $2, must_change_password = false, failed_logins = 0, locked_until = NULL WHERE id = $1',
+          [p.id, newHash],
+        );
+        await tx.query('UPDATE refresh_tokens SET revoked = true WHERE user_id = $1 AND NOT revoked', [p.id]);
+      });
+      audit({ userId: p.id, action: 'auth.password_changed', ip: req.ip });
+      return reply.send({ step: 'done', ...(await issueSession(p.id)) });
+    },
+  );
+
   app.get('/api/auth/me', { preHandler: requireUser }, async (req, reply) => {
     const p = req.principal!;
     const { rows } = await query<{ email: string; display_name: string }>(
@@ -239,6 +283,7 @@ export function authRoutes(app: FastifyInstance): void {
       role: p.role,
       companyId: p.companyId,
       companyAccess: p.companyAccess,
+      mustChangePassword: p.mustChangePassword === true,
     });
   });
 }

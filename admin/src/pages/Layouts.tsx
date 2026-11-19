@@ -264,7 +264,14 @@ export function Layouts({ company, canEdit }: { company: Company; canEdit: boole
                   <td>
                     <button className="danger"
                       onClick={async () => {
-                        if (confirm(`Delete layout "${l.name}"? Schedule slots using it are removed too.`)) {
+                        let used = '';
+                        try {
+                          const u = await api<{ assignments: number }>(`/api/layouts/${l.id}/usage`);
+                          if (u.assignments > 0) used = ` It is scheduled in ${u.assignments} slot${u.assignments === 1 ? '' : 's'}, which will be removed too.`;
+                        } catch {
+                          used = ' Schedule slots using it are removed too.';
+                        }
+                        if (confirm(`Delete layout "${l.name}"?${used}`)) {
                           try {
                             setError('');
                             await api(`/api/layouts/${l.id}`, { method: 'DELETE' });

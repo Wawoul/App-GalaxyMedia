@@ -72,6 +72,10 @@ class ApiClient(private val prefs: Prefs) {
             when {
                 response.isSuccessful -> json.decodeFromString<PollResponse>(response.bodyText("poll"))
                 response.code == 404 || response.code == 410 -> PollResponse(status = "expired")
+                // Throttled: the request is still valid, so keep the same code on screen
+                // and poll again. Treating this as a failure sent the TV round to
+                // register a NEW code, changing it under whoever was typing it in.
+                response.code == 429 -> PollResponse(status = "waiting")
                 else -> error("poll failed: ${response.code}")
             }
         }
@@ -145,11 +149,37 @@ class ApiClient(private val prefs: Prefs) {
         }
     }
 
+    /**
+     * A one-minute credential for the push socket, so the long-lived device token
+     * is never placed in a URL (URLs end up in proxy access logs). Returns null
+     * ONLY when an older server has no such endpoint (404) - the caller then falls
+     * back to the legacy token. Any other failure throws, because working around
+     * a transient error by exposing the token would defeat the whole point.
+     */
+    suspend fun fetchWsTicket(): String? = withContext(Dispatchers.IO) {
+        val request = authed(
+            Request.Builder()
+                .url("${base()}/api/device/ws-ticket")
+                .post("{}".toRequestBody(jsonType)),
+        ).build()
+        http.newCall(request).execute().use { response ->
+            if (response.code == 401) throw RevokedException()
+            if (response.code == 404) return@use null
+            check(response.isSuccessful) { "ws-ticket ${response.code}" }
+            org.json.JSONObject(response.bodyText("ws-ticket")).getString("ticket")
+        }
+    }
+
     /** Live push channel; caller handles reconnect with backoff. */
-    fun openWebSocket(listener: WebSocketListener): WebSocket {
+    fun openWebSocket(listener: WebSocketListener, ticket: String?): WebSocket {
         val wsBase = base().replaceFirst("http", "ws") // http→ws, https→wss
+        val credential = if (ticket != null) {
+            "ticket=${java.net.URLEncoder.encode(ticket, "UTF-8")}"
+        } else {
+            "token=${prefs.deviceToken}" // older server without /ws-ticket
+        }
         val request = Request.Builder()
-            .url("$wsBase/api/device/ws?token=${prefs.deviceToken}")
+            .url("$wsBase/api/device/ws?$credential")
             .build()
         return http.newWebSocket(request, listener)
     }

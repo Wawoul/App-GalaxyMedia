@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { query } from '../db/pool.js';
 import { audit } from '../lib/audit.js';
 import { canAccessCompany, isMspAdmin, visibleCompanies } from '../lib/permissions.js';
+import { removeCompanyFiles } from '../lib/files.js';
+import { emailListSchema } from '../lib/validators.js';
 import { requireUser } from '../plugins/auth.js';
 
 export function companyRoutes(app: FastifyInstance): void {
@@ -38,7 +40,7 @@ export function companyRoutes(app: FastifyInstance): void {
     const body = z
       .object({
         name: z.string().trim().min(1).max(200).optional(),
-        alertEmails: z.string().trim().max(1000).optional(), // extra offline-alert recipients
+        alertEmails: emailListSchema.optional(), // extra offline-alert recipients (validated, max 10)
         brandName: z.string().trim().max(100).optional(), // white-label name shown on TVs
       })
       .parse(req.body);
@@ -56,8 +58,14 @@ export function companyRoutes(app: FastifyInstance): void {
   app.delete('/api/companies/:id', async (req, reply) => {
     if (!isMspAdmin(req.principal!)) return reply.code(403).send({ error: 'forbidden' });
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    // Read the screens first: once the company is deleted their rows cascade away,
+    // and their screenshots on disk would be unfindable.
+    const { rows: screens } = await query<{ id: string }>('SELECT id FROM screens WHERE company_id = $1', [id]);
     const { rowCount } = await query('DELETE FROM companies WHERE id = $1', [id]);
     if (!rowCount) return reply.code(404).send({ error: 'not_found' });
+    // The rows cascade; the files do not. Without this a deleted customer's media
+    // stayed on disk for ever.
+    await removeCompanyFiles(id, screens.map((s) => s.id));
     audit({ userId: req.principal!.id, companyId: id, action: 'company.delete', ip: req.ip });
     return reply.send({ ok: true });
   });

@@ -116,6 +116,21 @@ export function layoutRoutes(app: FastifyInstance): void {
     return reply.code(201).send(rows[0]);
   });
 
+  // How many schedule slots deleting this layout would remove (they cascade).
+  app.get('/api/layouts/:id/usage', async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const { rows } = await query<{ company_id: string }>('SELECT company_id FROM layouts WHERE id = $1', [id]);
+    if (!rows[0]) return reply.code(404).send({ error: 'not_found' });
+    if (!canAccessCompany(req.principal!, rows[0].company_id, 'viewer')) {
+      return reply.code(403).send({ error: 'forbidden' });
+    }
+    const usage = await query<{ assignments: number }>(
+      'SELECT count(*)::int AS assignments FROM assignments WHERE layout_id = $1',
+      [id],
+    );
+    return reply.send(usage.rows[0]);
+  });
+
   app.delete('/api/layouts/:id', async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const { rows } = await query<{ company_id: string }>('SELECT company_id FROM layouts WHERE id = $1', [id]);

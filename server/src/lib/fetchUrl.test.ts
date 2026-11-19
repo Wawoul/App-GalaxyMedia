@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fetchRemoteFile, toDirectDownloadUrl } from './fetchUrl.js';
+import { fetchRemoteFile, suggestedNameFrom, toDirectDownloadUrl } from './fetchUrl.js';
 
 /**
  * The import endpoint makes the server fetch a URL an admin supplies, which is
@@ -77,6 +77,36 @@ describe('fetchRemoteFile SSRF guards', () => {
     await expect(
       fetchRemoteFile('http://no-such-host.invalid/x', opts),
     ).rejects.toThrow(/resolve/i);
+  });
+});
+
+describe('suggestedNameFrom', () => {
+  const url = (path: string) => new URL(`https://files.example.com${path}`);
+
+  it("does not throw on a filename containing a bare '%'", () => {
+    // decodeURIComponent throws on "50%_off", which made the whole import fail with
+    // a 500 for a perfectly good file.
+    expect(suggestedNameFrom(null, url('/menus/50%_off.mp4'))).toBe('50%_off.mp4');
+    expect(suggestedNameFrom('attachment; filename="100%.mp4"', url('/x'))).toBe('100%.mp4');
+  });
+
+  it('decodes real percent-escapes', () => {
+    expect(suggestedNameFrom(null, url('/caf%C3%A9.mp4'))).toBe('café.mp4');
+    expect(suggestedNameFrom("attachment; filename*=UTF-8''caf%C3%A9.mp4", url('/x'))).toBe('café.mp4');
+  });
+
+  it('prefers the Content-Disposition name over the URL path', () => {
+    expect(suggestedNameFrom('attachment; filename="menu.mp4"', url('/download?id=7'))).toBe('menu.mp4');
+  });
+
+  it('strips path separators a hostile name might carry', () => {
+    expect(suggestedNameFrom('attachment; filename="../../etc/passwd"', url('/x'))).not.toMatch(/[/\\]/);
+    expect(suggestedNameFrom(null, url('/a%2F..%2F..%2Fb.mp4'))).not.toMatch(/[/\\]/);
+  });
+
+  it('falls back to a default, and caps the length', () => {
+    expect(suggestedNameFrom(null, url('/'))).toBe('import');
+    expect(suggestedNameFrom(`attachment; filename="${'a'.repeat(400)}.mp4"`, url('/x'))).toHaveLength(300);
   });
 });
 

@@ -132,13 +132,15 @@ class MainActivity : AppCompatActivity() {
             this, root, cache, lifecycleScope,
             // Fires when an item goes on screen - drives the dashboard's
             // "now playing", so it must update at the START of an item.
-            onItemChanged = { item -> currentItem = item },
+            // Clipped to the server's limits (it also clips, but older servers
+            // reject an over-long value - and with it the whole heartbeat).
+            onItemChanged = { item -> currentItem = item?.take(200) },
             // Fires once an item has actually played through - this is the
             // proof-of-play record, so a file that failed to decode is excluded.
             onItemPlayed = { item ->
                 if (item != null) {
                     synchronized(playsBuffer) {
-                        playsBuffer.addLast(PlayRecord(item, java.time.Instant.now().toString()))
+                        playsBuffer.addLast(PlayRecord(item.take(300), java.time.Instant.now().toString()))
                         while (playsBuffer.size > 400) playsBuffer.removeFirst()
                     }
                 }
@@ -375,13 +377,21 @@ class MainActivity : AppCompatActivity() {
         // including the items means an unchanged playlist keeps the same key and
         // playback is left alone, which is what lets a video reach its end and
         // be recorded as a play.
+        // How many of a playlist's items can actually play right now. A zone
+        // snapshots only the CACHED items when it starts, so without this in the
+        // key an item that finishes downloading after playback began was never
+        // added to the running loop - a new video on a slow link would not appear
+        // until something else changed or the TV restarted. Downloads routinely
+        // outlast the one-minute schedule tick, which is what made it common.
+        fun playable(p: ManifestPlaylist?): Int =
+            p?.items?.count { it.type == "url" || cache.isCached(it) } ?: 0
         val key = when {
             blackout -> "blackout"
             layout != null -> "layout:${layout.id}:${layout.zones.joinToString(",") { z ->
-                "${z.key}=${z.playlist?.items?.joinToString("|") { "${it.id}:${it.durationMs}" }}"
+                "${z.key}=${z.playlist?.items?.joinToString("|") { "${it.id}:${it.durationMs}" }}#${playable(z.playlist)}"
             }}"
             else -> playlist?.let { p ->
-                "${p.id}:${p.items.joinToString("|") { "${it.id}:${it.durationMs}" }}"
+                "${p.id}:${p.items.joinToString("|") { "${it.id}:${it.durationMs}" }}#${playable(p)}"
             }
         }
         if (key == activePlaylistId && (isPlaying || blackout)) return // no change
@@ -551,6 +561,27 @@ class MainActivity : AppCompatActivity() {
         webSocket?.cancel()
         if (prefs.deviceToken == null) return
         val generation = ++wsGeneration
+        lifecycleScope.launch {
+        // Trade the device token for a one-minute ticket so it never sits in a URL.
+        // null = an older server without the endpoint, which gets the legacy form.
+        val ticket = try {
+            api.fetchWsTicket()
+        } catch (e: RevokedException) {
+            onUnpaired()
+            return@launch
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // Could not get a ticket right now: back off and retry, exactly like a
+            // failed connection - never fall back to putting the token in the URL.
+            if (generation == wsGeneration) {
+                wsFailureCount++
+                val delayMs = (WS_RECONNECT_BASE_MS * wsFailureCount).coerceAtMost(WS_RECONNECT_MAX_MS)
+                root.postDelayed({ if (generation == wsGeneration) connectWebSocket() }, delayMs)
+            }
+            return@launch
+        }
+        if (generation != wsGeneration) return@launch // superseded while we were fetching
         webSocket = api.openWebSocket(object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: okhttp3.Response) {
                 wsFailureCount = 0
@@ -563,7 +594,12 @@ class MainActivity : AppCompatActivity() {
                         "sync" -> lifecycleScope.launch { runCatching { syncNow() } }
                         "unpair" -> onUnpaired()
                         "command" -> when (message.optString("command")) {
-                            "reload" -> lifecycleScope.launch { runCatching { syncNow() } }
+                            "reload" -> {
+                                // An explicit tech request: retry every item, including
+                                // ones sitting in a download backoff.
+                                cache.forgetAllFailures()
+                                lifecycleScope.launch { runCatching { syncNow() } }
+                            }
                             "screenshot" -> captureAndUpload()
                             "identify" -> identify()
                             "clear_cache" -> {
@@ -590,7 +626,8 @@ class MainActivity : AppCompatActivity() {
                 val delayMs = (WS_RECONNECT_BASE_MS * wsFailureCount).coerceAtMost(WS_RECONNECT_MAX_MS)
                 root.postDelayed({ if (generation == wsGeneration) connectWebSocket() }, delayMs)
             }
-        })
+        }, ticket)
+        }
     }
 
     /** Grab what's on screen (PixelCopy captures video surfaces too) and upload it. */

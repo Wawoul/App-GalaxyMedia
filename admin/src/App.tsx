@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, clearSession, restoreSession, SESSION_EXPIRED_EVENT } from './api';
+import { Account } from './pages/Account';
 import { Alerts } from './pages/Alerts';
 import { Companies } from './pages/Companies';
 import { Login } from './pages/Login';
@@ -15,7 +16,7 @@ import type { Company, Me } from './types';
 
 type Page =
   | 'screens' | 'media' | 'playlists' | 'layouts' | 'schedule' | 'reports'
-  | 'companies' | 'users' | 'alerts' | 'system';
+  | 'companies' | 'users' | 'alerts' | 'system' | 'account';
 
 export function App() {
   const [ready, setReady] = useState(false);
@@ -48,6 +49,18 @@ export function App() {
 
   if (!ready) return null;
   if (!me) return <Login onDone={() => void loadSession()} />;
+  // An administrator chose this password. The server refuses everything else
+  // until it is replaced, so there is nothing else worth showing.
+  if (me.mustChangePassword) {
+    return (
+      <div className="login-wrap">
+        <div style={{ width: 'min(460px, 92vw)' }}>
+          <Account forced onChanged={() => void loadSession()} />
+          <button className="secondary" onClick={() => { clearSession(); setMe(null); }}>Sign out</button>
+        </div>
+      </div>
+    );
+  }
 
   const company = companies.find((c) => c.id === companyId) ?? null;
   const isMspAdmin = me.level === 'msp' && me.role === 'admin';
@@ -97,7 +110,9 @@ export function App() {
           <button className={page === 'system' ? 'active' : ''} onClick={() => setPage('system')}>System</button>
         )}
         <div style={{ flex: 1 }} />
-        <div className="muted">{me.displayName}</div>
+        <button className={page === 'account' ? 'active' : ''} onClick={() => setPage('account')}>
+          {me.displayName}
+        </button>
         <button className="signout" onClick={() => { clearSession(); setMe(null); }}>Sign out</button>
       </nav>
       <main className="main">
@@ -120,6 +135,7 @@ export function App() {
         {page === 'users' && <Users me={me} companies={companies} />}
         {page === 'alerts' && <Alerts />}
         {page === 'system' && <System />}
+        {page === 'account' && <Account forced={false} onChanged={() => void loadSession()} />}
         {!company && !['companies', 'users', 'alerts', 'system'].includes(page) && (
           <div className="panel muted">
             No companies yet.{' '}

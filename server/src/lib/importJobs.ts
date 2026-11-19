@@ -29,6 +29,8 @@ export interface ImportJob {
   /** Set on failure - safe to show to the admin who asked. */
   error?: string;
   startedAt: number;
+  /** When bytes last arrived. Staleness is judged from this, not from startedAt. */
+  lastProgressAt: number;
   finishedAt?: number;
 }
 
@@ -41,14 +43,22 @@ const KEEP_FINISHED_MS = 5 * 60_000;
 // can't be mid-download without updating receivedBytes).
 const STALE_MS = 60 * 60_000;
 
-setInterval(() => {
-  const now = Date.now();
+/**
+ * Drops finished jobs once the page has had time to read them, and downloads that
+ * have genuinely stalled. "Stalled" is time since bytes LAST arrived: this used to
+ * measure time since the job STARTED, so a big file over a slow link lost its record
+ * at 60 minutes while still downloading - the page never saw it finish, and the
+ * per-company concurrency cap stopped counting it.
+ */
+export function pruneJobs(now = Date.now()): void {
   for (const [id, job] of jobs) {
     const finished = job.finishedAt !== undefined;
     if (finished && now - job.finishedAt! > KEEP_FINISHED_MS) jobs.delete(id);
-    else if (!finished && now - job.startedAt > STALE_MS) jobs.delete(id);
+    else if (!finished && now - job.lastProgressAt > STALE_MS) jobs.delete(id);
   }
-}, 60_000).unref();
+}
+
+setInterval(() => pruneJobs(), 60_000).unref();
 
 /**
  * Deletes `.upload-*` scratch files left behind when the process died mid-write.
@@ -114,7 +124,7 @@ export function activeCountForCompany(companyId: string): number {
   return count;
 }
 
-export function createJob(job: Omit<ImportJob, 'status' | 'receivedBytes' | 'startedAt'>): ImportJob {
+export function createJob(job: Omit<ImportJob, 'status' | 'receivedBytes' | 'startedAt' | 'lastProgressAt'>): ImportJob {
   if (activeCountForCompany(job.companyId) >= MAX_ACTIVE_IMPORTS_PER_COMPANY) {
     throw new TooManyImportsError();
   }
@@ -123,6 +133,7 @@ export function createJob(job: Omit<ImportJob, 'status' | 'receivedBytes' | 'sta
     status: 'downloading',
     receivedBytes: 0,
     startedAt: Date.now(),
+    lastProgressAt: Date.now(),
   };
   jobs.set(created.id, created);
   return created;
@@ -134,7 +145,10 @@ export function getJob(id: string): ImportJob | undefined {
 
 export function updateProgress(id: string, receivedBytes: number): void {
   const job = jobs.get(id);
-  if (job) job.receivedBytes = receivedBytes;
+  if (job) {
+    job.receivedBytes = receivedBytes;
+    job.lastProgressAt = Date.now();
+  }
 }
 
 export function finishJob(id: string, media: Record<string, unknown>): void {

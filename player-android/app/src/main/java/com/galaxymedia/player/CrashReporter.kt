@@ -36,6 +36,11 @@ object CrashReporter {
                     .putString(KEY_MESSAGE, summary.take(500))
                     .commit() // synchronous: the process is about to die, apply() may never flush
             }
+            // Bring the player back in a few seconds rather than waiting for the
+            // 5-minute watchdog to notice 15 minutes of silence (a crash used to leave
+            // the screen dark for up to ~20 minutes). Rate-limited inside, so a crash
+            // on startup does not become an endless relaunch loop.
+            runCatching { Watchdog.scheduleRelaunchSoon(appContext) }
             previous?.uncaughtException(thread, throwable)
                 ?: run {
                     android.os.Process.killProcess(android.os.Process.myPid())

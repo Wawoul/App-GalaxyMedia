@@ -63,6 +63,21 @@ export function generatePairingCode(length = 6): string {
   return code;
 }
 
+/**
+ * Expiry for a signed URL, rounded down to a bucket boundary.
+ *
+ * `now + ttl` made every manifest carry a different token, so the URL text for
+ * the same file changed every minute. Browsers treat that as a new resource
+ * (refetching whole videos despite `cache-control`), and the web player saw "a
+ * different src" and restarted the item. Rounding the expiry means every
+ * request within a bucket gets byte-identical URLs. The remaining life is
+ * always between `ttl - bucket` and `ttl`, far longer than the 60s manifest
+ * refresh, so a player always holds a URL with plenty of life left.
+ */
+export function stableExpiry(ttlS: number, bucketS = 15 * 60, nowMs = Date.now()): number {
+  return Math.floor(nowMs / 1000 / bucketS) * bucketS + ttlS;
+}
+
 /** HMAC-signed, expiring token for media downloads (usable in query strings). */
 export function signDownload(mediaId: string, screenOrUserId: string, expiresAtS: number): string {
   const mac = createHmac('sha256', config.JWT_SECRET)

@@ -12,6 +12,8 @@ export interface Principal {
   role: Role;
   companyId: string | null; // company users only
   companyAccess: string[]; // msp_editor access list; ignored otherwise
+  /** Someone else chose this password; only the password change is allowed until it is replaced. */
+  mustChangePassword?: boolean;
 }
 
 const ROLE_RANK: Record<Role, number> = { viewer: 0, editor: 1, admin: 2 };

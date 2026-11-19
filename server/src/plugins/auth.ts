@@ -16,11 +16,12 @@ interface UserRow {
   role: 'admin' | 'editor' | 'viewer';
   company_id: string | null;
   disabled: boolean;
+  must_change_password: boolean;
 }
 
 async function loadPrincipal(userId: string): Promise<Principal | null> {
   const { rows } = await query<UserRow>(
-    'SELECT id, level, role, company_id, disabled FROM users WHERE id = $1',
+    'SELECT id, level, role, company_id, disabled, must_change_password FROM users WHERE id = $1',
     [userId],
   );
   const user = rows[0];
@@ -39,8 +40,17 @@ async function loadPrincipal(userId: string): Promise<Principal | null> {
     role: user.role,
     companyId: user.company_id,
     companyAccess,
+    mustChangePassword: user.must_change_password,
   };
 }
+
+// The only routes a user who must change their password may reach: the change
+// itself, enough to find out why they are blocked, and signing out.
+const ALLOWED_WHEN_PASSWORD_CHANGE_REQUIRED = new Set([
+  '/api/auth/password',
+  '/api/auth/me',
+  '/api/auth/logout',
+]);
 
 function bearerToken(req: FastifyRequest): string | null {
   const header = req.headers.authorization;
@@ -61,6 +71,11 @@ export async function requireUser(req: FastifyRequest, reply: FastifyReply): Pro
   const principal = await loadPrincipal(claims.sub);
   if (!principal) {
     return reply.code(401).send({ error: 'unauthenticated' });
+  }
+  // Enforced here, not just hidden in the UI: a temporary password someone else
+  // knows must not be usable for real work, whatever client is in use.
+  if (principal.mustChangePassword && !ALLOWED_WHEN_PASSWORD_CHANGE_REQUIRED.has(req.routeOptions.url ?? '')) {
+    return reply.code(403).send({ error: 'password_change_required' });
   }
   req.principal = principal;
 }

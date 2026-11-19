@@ -63,8 +63,10 @@ export function userRoutes(app: FastifyInstance): void {
     const hash = await argon2.hash(body.password, { type: argon2.argon2id });
     const user = await withTransaction(async (tx) => {
       const { rows } = await tx.query(
-        `INSERT INTO users (email, password_hash, display_name, level, role, company_id)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        // must_change_password: the admin chose this password, so the new user has
+        // to replace it at first sign-in rather than keep a password someone else knows.
+        `INSERT INTO users (email, password_hash, display_name, level, role, company_id, must_change_password)
+         VALUES ($1, $2, $3, $4, $5, $6, true)
          RETURNING id, email, display_name, level, role, company_id, totp_enabled, disabled, created_at`,
         [body.email, hash, body.displayName, body.level, body.role, body.companyId ?? null],
       );
@@ -78,7 +80,13 @@ export function userRoutes(app: FastifyInstance): void {
         }
       }
       return created;
+    }).catch((err: unknown) => {
+      // 23505 = unique_violation: that email already has an account (the column is
+      // citext, so "Bob@x.com" and "bob@x.com" collide). A 500 told the admin nothing.
+      if ((err as { code?: string }).code === '23505') return null;
+      throw err;
     });
+    if (!user) return reply.code(409).send({ error: 'email_in_use' });
     audit({ userId: p.id, action: 'user.create', entity: 'user', entityId: user.id as string, ip: req.ip });
     return reply.code(201).send(user);
   });
@@ -181,7 +189,13 @@ export function userRoutes(app: FastifyInstance): void {
       }
       if (body.password !== undefined) {
         const hash = await argon2.hash(body.password, { type: argon2.argon2id });
-        await tx.query('UPDATE users SET password_hash = $2 WHERE id = $1', [id, hash]);
+        // Someone else resetting a password means they know it: force a change at
+        // next sign-in. Setting your own needs no such step.
+        await tx.query('UPDATE users SET password_hash = $2, must_change_password = $3 WHERE id = $1', [
+          id,
+          hash,
+          id !== p.id,
+        ]);
         await tx.query('UPDATE refresh_tokens SET revoked = true WHERE user_id = $1', [id]);
       }
       if (body.resetTotp) {
@@ -210,8 +224,8 @@ export function userRoutes(app: FastifyInstance): void {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     if (id === p.id) return reply.code(400).send({ error: 'cannot_delete_self' });
 
-    const { rows } = await query<{ company_id: string | null; level: string; role: string }>(
-      'SELECT company_id, level, role FROM users WHERE id = $1',
+    const { rows } = await query<{ company_id: string | null; level: string; role: string; disabled: boolean }>(
+      'SELECT company_id, level, role, disabled FROM users WHERE id = $1',
       [id],
     );
     const target = rows[0];
@@ -219,8 +233,10 @@ export function userRoutes(app: FastifyInstance): void {
     const allowed = isMspAdmin(p) || (target.level === 'company' && canManageUsers(p, target.company_id));
     if (!allowed) return reply.code(403).send({ error: 'forbidden' });
 
-    // Never delete the last active MSP admin - that would lock everyone out.
-    if (target.level === 'msp' && target.role === 'admin') {
+    // Never delete the last active MSP admin - that would lock everyone out. Only an
+    // ACTIVE admin counts: a disabled one is not in the tally, so removing it cannot
+    // lock anyone out (and with a single active admin left it used to be undeletable).
+    if (target.level === 'msp' && target.role === 'admin' && !target.disabled) {
       const { rows: admins } = await query<{ count: string }>(
         `SELECT count(*) FROM users WHERE level = 'msp' AND role = 'admin' AND NOT disabled`,
       );

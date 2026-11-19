@@ -4,6 +4,8 @@ import { query, withTransaction } from '../db/pool.js';
 import { audit } from '../lib/audit.js';
 import { canAccessCompany } from '../lib/permissions.js';
 import { validatePresetZones } from '../lib/presets.js';
+import { itemUrlSchema } from '../lib/urls.js';
+import { timezoneSchema } from '../lib/validators.js';
 import { requireUser } from '../plugins/auth.js';
 import { notifyCompany } from '../ws.js';
 
@@ -19,7 +21,7 @@ const EXPORT_VERSION = 1;
 
 const importSchema = z.object({
   galaxyMediaExport: z.literal(EXPORT_VERSION),
-  groups: z.array(z.object({ name: z.string().min(1).max(200), timezone: z.string().max(64) })).max(200),
+  groups: z.array(z.object({ name: z.string().min(1).max(200), timezone: timezoneSchema })).max(200),
   playlists: z
     .array(
       z.object({
@@ -27,7 +29,7 @@ const importSchema = z.object({
         items: z
           .array(
             z.object({
-              url: z.string().max(2000).nullish(),
+              url: itemUrlSchema.nullish(), // an import must not smuggle in what the editor refuses
               sha256: z.string().max(64).nullish(),
               originalName: z.string().max(300).nullish(),
               durationMs: z.number().int().nullish(),

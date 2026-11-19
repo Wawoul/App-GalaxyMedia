@@ -6,7 +6,11 @@ import { z } from 'zod';
 import { config, SIGNED_URL_TTL_S } from '../config.js';
 import { query, withTransaction } from '../db/pool.js';
 import { audit } from '../lib/audit.js';
-import { signDownload, verifyDownload } from '../lib/crypto.js';
+import { signDownload, stableExpiry, verifyDownload } from '../lib/crypto.js';
+import { removeScreenshot } from '../lib/files.js';
+import { timezoneSchema } from '../lib/validators.js';
+import { effectiveTimezone } from '../lib/effectiveTimezone.js';
+import { nowInTimezone, resolveActive, type ScheduleEntry } from '../lib/schedule.js';
 import { canAccessCompany, visibleCompanies } from '../lib/permissions.js';
 import { requireUser } from '../plugins/auth.js';
 import { signDeviceToken } from '../lib/tokens.js';
@@ -28,6 +32,69 @@ export function screenshotRoute(app: FastifyInstance): void {
       .header('cache-control', 'no-store')
       .sendFile(`screenshots/${id}.jpg`);
   });
+}
+
+/** What each listed screen is playing right now, by screen id (name of playlist/layout). */
+async function resolveNowPlaying(
+  screens: Record<string, unknown>[],
+  companyIds: string[],
+): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  if (screens.length === 0) return result;
+  const [{ rows: assignments }, { rows: groups }] = await Promise.all([
+    query<{
+      id: string; company_id: string; screen_id: string | null; group_id: string | null;
+      created_at: Date; priority: number; days_of_week: number[] | null;
+      start_time: string | null; end_time: string | null; start_date: string | null;
+      end_date: string | null; week_interval: number; name: string;
+    }>(
+      `SELECT a.id, a.company_id, a.screen_id, a.group_id, a.created_at, a.priority,
+              a.days_of_week, a.start_time, a.end_time, a.week_interval,
+              to_char(a.start_date, 'YYYY-MM-DD') AS start_date,
+              to_char(a.end_date, 'YYYY-MM-DD') AS end_date,
+              coalesce(p.name, l.name, 'Black Screen') AS name
+       FROM assignments a
+       LEFT JOIN playlists p ON p.id = a.playlist_id
+       LEFT JOIN layouts l ON l.id = a.layout_id
+       WHERE a.company_id = ANY($1)`,
+      [companyIds],
+    ),
+    query<{ id: string; name: string; timezone: string | null }>(
+      'SELECT id, name, timezone FROM screen_groups WHERE company_id = ANY($1)',
+      [companyIds],
+    ),
+  ]);
+  const groupById = new Map(groups.map((g) => [g.id, g]));
+  const clocks = new Map<string, ReturnType<typeof nowInTimezone>>();
+  for (const s of screens) {
+    const screenId = s.id as string;
+    const groupIds = (s.group_ids as string[]) ?? [];
+    const tz = effectiveTimezone(
+      s.timezone as string | null,
+      groupIds.flatMap((id) => (groupById.has(id) ? [groupById.get(id)!] : [])),
+    );
+    let now = clocks.get(tz);
+    if (!now) clocks.set(tz, (now = nowInTimezone(tz)));
+    const entries: (ScheduleEntry & { label: string })[] = assignments
+      .filter((a) => a.company_id === s.company_id && (a.screen_id === screenId || (a.group_id !== null && groupIds.includes(a.group_id))))
+      .map((a) => ({
+        id: a.id,
+        playlistId: null,
+        isDirect: a.screen_id !== null,
+        createdAt: a.created_at.toISOString(),
+        priority: a.priority,
+        daysOfWeek: a.days_of_week,
+        startTime: a.start_time,
+        endTime: a.end_time,
+        startDate: a.start_date,
+        endDate: a.end_date,
+        weekInterval: a.week_interval,
+        label: a.name,
+      }));
+    const active = resolveActive(entries, now);
+    if (active) result.set(screenId, active.label);
+  }
+  return result;
 }
 
 export function screenRoutes(app: FastifyInstance): void {
@@ -54,7 +121,7 @@ export function screenRoutes(app: FastifyInstance): void {
       return reply.code(403).send({ error: 'forbidden' });
     }
     const body = z
-      .object({ name: z.string().trim().min(1).max(200), timezone: z.string().max(64).optional() })
+      .object({ name: z.string().trim().min(1).max(200), timezone: timezoneSchema.optional() })
       .parse(req.body);
     const { rows } = await query(
       `INSERT INTO screen_groups (company_id, name, timezone)
@@ -99,60 +166,26 @@ export function screenRoutes(app: FastifyInstance): void {
               (s.device_token_jti IS NOT NULL) AS paired,
               (s.last_seen_at > now() - interval '3 minutes') AS online,
               coalesce(array_agg(m.group_id) FILTER (WHERE m.group_id IS NOT NULL), '{}') AS group_ids,
-              pl.name AS playlist_name
+              NULL::text AS playlist_name
        FROM screens s
        JOIN companies c ON c.id = s.company_id
        LEFT JOIN screen_group_members m ON m.screen_id = s.id
        LEFT JOIN media med ON med.company_id = s.company_id AND med.id::text = s.current_item
-       LEFT JOIN LATERAL (
-         -- Effective assignment. This must match lib/schedule.ts's resolveActive,
-         -- which the players use: highest priority first, then direct-over-group,
-         -- then newest. It previously ordered on direct/newest only and ignored
-         -- priority AND every schedule filter, so the dashboard happily showed an
-         -- expired or lower-priority assignment as "now playing" while the TV
-         -- played something else entirely.
-         -- Evaluated in the screen's own timezone, again like the players.
-         SELECT coalesce(p.name, l.name, 'Black Screen') AS name
-         FROM assignments a
-         LEFT JOIN playlists p ON p.id = a.playlist_id
-         LEFT JOIN layouts l ON l.id = a.layout_id
-         CROSS JOIN LATERAL (
-           SELECT (now() AT TIME ZONE coalesce(s.timezone, 'Europe/London')) AS local_now
-         ) tz
-         WHERE a.company_id = s.company_id AND (
-           a.screen_id = s.id
-           OR a.group_id IN (SELECT group_id FROM screen_group_members gm WHERE gm.screen_id = s.id)
-         )
-         -- Date range (inclusive), if set.
-         AND (a.start_date IS NULL OR tz.local_now::date >= a.start_date)
-         AND (a.end_date IS NULL OR tz.local_now::date <= a.end_date)
-         -- Day-of-week, if set. Postgres dow: 0=Sun..6=Sat, matching days_of_week.
-         AND (
-           a.days_of_week IS NULL
-           OR extract(dow FROM tz.local_now)::int = ANY(a.days_of_week)
-         )
-         -- Time window, if set; end <= start means it runs past midnight.
-         AND (
-           a.start_time IS NULL OR a.end_time IS NULL
-           OR (
-             CASE WHEN a.end_time > a.start_time
-               THEN tz.local_now::time >= a.start_time AND tz.local_now::time < a.end_time
-               ELSE tz.local_now::time >= a.start_time OR tz.local_now::time < a.end_time
-             END
-           )
-         )
-         ORDER BY a.priority DESC, (a.screen_id IS NOT NULL) DESC, a.created_at DESC
-         LIMIT 1
-       ) pl ON true
        WHERE ($1::uuid[] IS NULL OR s.company_id = ANY($1))
-       GROUP BY s.id, c.name, med.original_name, pl.name
+       GROUP BY s.id, c.name, med.original_name
        ORDER BY c.name, s.name`,
       [companyFilter],
     );
-    const expires = Math.floor(Date.now() / 1000) + SIGNED_URL_TTL_S;
+    // "Now playing" comes from the SAME resolver the TVs use (lib/schedule.ts), in the
+    // same effective timezone. It used to be a SQL copy of the rules that ignored
+    // bi-weekly slots, overnight tails and group timezones, so it could disagree.
+    const companyIds = [...new Set(rows.map((s) => s.company_id as string))];
+    const nowByScreen = await resolveNowPlaying(rows, companyIds);
+    const expires = stableExpiry(SIGNED_URL_TTL_S);
     return reply.send(
       rows.map((s) => ({
         ...s,
+        playlist_name: nowByScreen.get(s.id as string) ?? null,
         screenshot_url: s.screenshot_at
           ? `/api/screens/${s.id}/screenshot?token=${signDownload(`shot-${s.id}`, req.principal!.id, expires)}`
           : null,
@@ -231,7 +264,7 @@ export function screenRoutes(app: FastifyInstance): void {
     const body = z
       .object({
         name: z.string().trim().min(1).max(200).optional(),
-        timezone: z.string().max(64).nullable().optional(),
+        timezone: timezoneSchema.nullable().optional(),
         orientation: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).optional(),
         groupIds: z.array(z.string().uuid()).optional(),
       })
@@ -341,6 +374,7 @@ export function screenRoutes(app: FastifyInstance): void {
     }
     notifyScreen(id, { type: 'unpair' });
     await query('DELETE FROM screens WHERE id = $1', [id]);
+    await removeScreenshot(id); // the file is not covered by the row's cascade
     audit({ userId: req.principal!.id, companyId: rows[0].company_id, action: 'screen.delete', entityId: id, ip: req.ip });
     return reply.send({ ok: true });
   });

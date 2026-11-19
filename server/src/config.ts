@@ -21,10 +21,24 @@ const schema = z.object({
     .string()
     .regex(/^[0-9a-fA-F]{64}$/, 'ENCRYPTION_KEY must be 32 bytes hex (64 hex chars)'),
   MEDIA_DIR: z.string().min(1),
+  // Which address(es) may speak for the client in X-Forwarded-For: an IP/CIDR, or a
+  // comma-separated list. The default (127.0.0.1) is the bundled nginx on the same
+  // machine. A Docker install, where the proxy is another container, should set the
+  // proxy's address or network (e.g. 172.18.0.0/16). Trusting by address matters:
+  // the old "trust N hops" form lets anyone who can reach the app directly forge
+  // their IP, and Fastify no longer honours it.
+  TRUST_PROXY: z.string().min(1).default('127.0.0.1'),
   // When set, the API also serves the built admin UI from this directory
   // (single-container Docker deployments; the LXC install uses nginx instead).
   ADMIN_DIR: z.string().optional(),
   MAX_UPLOAD_MB: z.coerce.number().int().positive().default(512),
+  // Per-company storage cap in MB. 0 = unlimited (the default, so nothing changes
+  // until an operator opts in).
+  COMPANY_QUOTA_MB: z.coerce.number().int().min(0).default(0),
+  // Uploads are refused when they would leave less than this free on the media disk.
+  // One company filling the disk takes every other customer's screens down with it
+  // (the database, the API and every download share it).
+  MIN_FREE_DISK_MB: z.coerce.number().int().min(0).default(512),
   BOOTSTRAP_ADMIN_EMAIL: z.string().email().optional(),
   BOOTSTRAP_ADMIN_PASSWORD: z.string().min(12).optional(),
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),

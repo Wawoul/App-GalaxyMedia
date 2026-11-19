@@ -5,7 +5,10 @@ import { z } from 'zod';
 import { config, PAIRING_CODE_TTL_S, SIGNED_URL_TTL_S } from '../config.js';
 import { query } from '../db/pool.js';
 import { audit } from '../lib/audit.js';
-import { generatePairingCode, signDownload } from '../lib/crypto.js';
+import { generatePairingCode, signDownload, stableExpiry, verifyDownload } from '../lib/crypto.js';
+import { heartbeatSchema } from '../lib/heartbeat.js';
+import { isStoredItemUrlAllowed } from '../lib/urls.js';
+import { effectiveTimezone } from '../lib/effectiveTimezone.js';
 import { LAYOUT_PRESETS } from '../lib/presets.js';
 import { nowInTimezone, resolveActive, type ScheduleEntry } from '../lib/schedule.js';
 import { verifyToken } from '../lib/tokens.js';
@@ -18,10 +21,17 @@ export function deviceRoutes(app: FastifyInstance): void {
   // ── Pairing (unauthenticated - aggressively rate-limited, SPEC §8) ────────
 
   app.register(async (scope) => {
-    scope.addHook('onRequest', scope.rateLimit({ max: 12, timeWindow: '1 minute' }));
+    // Limits are per ROUTE below. A single shared 12-a-minute budget used to put one
+    // TV (polling every 5s) exactly on the limit and made a second TV on the same
+    // site throttle both - and a throttled TV registered again, so its on-screen
+    // pairing code changed mid-install.
+    //
+    // Do NOT also add a scope-level scope.rateLimit() hook here: @fastify/rate-limit
+    // then silently skips the route-level limits (verified), leaving only the scope one.
 
-    // Fresh device asks for a pairing code to display.
-    scope.post('/api/device/register', async (req, reply) => {
+    // Fresh device asks for a pairing code to display. Per address, and generous
+    // enough for a site pairing a handful of TVs at once from one public IP.
+    scope.post('/api/device/register', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req, reply) => {
       for (let attempt = 0; attempt < 5; attempt++) {
         const code = generatePairingCode();
         try {
@@ -45,7 +55,22 @@ export function deviceRoutes(app: FastifyInstance): void {
     });
 
     // Device polls until an admin claims its code; token is delivered exactly once.
-    scope.get('/api/device/register/:requestId', async (req, reply) => {
+    // Polled every 5s by the TV (12 a minute). Budgeted per pairing REQUEST, so TVs
+    // sharing one address do not starve each other; the request id is an
+    // unguessable UUID, so it is also a sound key.
+    scope.get(
+      '/api/device/register/:requestId',
+      {
+        config: {
+          rateLimit: {
+            max: 30,
+            timeWindow: '1 minute',
+            keyGenerator: (req: { params?: unknown; ip: string }) =>
+              (req.params as { requestId?: string } | undefined)?.requestId ?? req.ip,
+          },
+        },
+      },
+      async (req, reply) => {
       const { requestId } = z.object({ requestId: z.string().uuid() }).parse(req.params);
       const { rows } = await query<{
         code: string;
@@ -111,7 +136,14 @@ export function deviceRoutes(app: FastifyInstance): void {
         [screenId],
       );
       const screen = screenRows[0]!;
-      const timezone = screen.timezone ?? 'Europe/London';
+      // The screen's own zone, else its group's (the Schedule page promises that), else
+      // London - the same rule the dashboard and reports use. Junk values are skipped.
+      const { rows: groupRows } = await query<{ name: string; timezone: string | null }>(
+        `SELECT g.name, g.timezone FROM screen_group_members m
+         JOIN screen_groups g ON g.id = m.group_id WHERE m.screen_id = $1`,
+        [screenId],
+      );
+      const timezone = effectiveTimezone(screen.timezone, groupRows);
 
       // Every assignment relevant to this screen (SPEC §6: the TV stores the
       // whole schedule and dayparts locally, so offline behavior matches online).
@@ -170,7 +202,7 @@ export function deviceRoutes(app: FastifyInstance): void {
           : [];
 
       // Load each referenced playlist once, with signed media URLs.
-      const expires = Math.floor(Date.now() / 1000) + SIGNED_URL_TTL_S;
+      const expires = stableExpiry(SIGNED_URL_TTL_S); // same URLs all through a bucket
       const playlistIds = [
         ...new Set([
           ...assignments.flatMap((a) => (a.playlist_id ? [a.playlist_id] : [])),
@@ -184,8 +216,10 @@ export function deviceRoutes(app: FastifyInstance): void {
         ]),
       ];
       const playlists = new Map<string, unknown>();
-      for (const playlistId of playlistIds) {
-        const { rows: items } = await query<{
+      // One query for every playlist's items (it used to be one per playlist, per sync,
+      // per screen), grouped here in position order.
+      const { rows: allItems } = await query<{
+          playlist_id: string;
           id: string;
           media_id: string | null;
           url: string | null;
@@ -197,15 +231,25 @@ export function deviceRoutes(app: FastifyInstance): void {
           size_bytes: string | null;
           original_name: string | null;
         }>(
-          `SELECT i.id, i.media_id, i.url, i.duration_ms, i.muted,
+          `SELECT i.playlist_id, i.id, i.media_id, i.url, i.duration_ms, i.muted,
                   m.kind, m.mime, m.sha256, m.size_bytes, m.original_name
            FROM playlist_items i LEFT JOIN media m ON m.id = i.media_id
-           WHERE i.playlist_id = $1 AND i.enabled ORDER BY i.position`,
-          [playlistId],
+           WHERE i.playlist_id = ANY($1) AND i.enabled ORDER BY i.playlist_id, i.position`,
+          [playlistIds],
         );
+      const itemsByPlaylist = new Map<string, typeof allItems>();
+      for (const row of allItems) {
+        const list = itemsByPlaylist.get(row.playlist_id);
+        if (list) list.push(row);
+        else itemsByPlaylist.set(row.playlist_id, [row]);
+      }
+      for (const playlistId of playlistIds) {
+        const items = itemsByPlaylist.get(playlistId) ?? [];
         playlists.set(playlistId, {
           id: playlistId,
-          items: items.map((i) => ({
+          // Rows saved before URL items were restricted may hold javascript:/file:
+          // URLs; they must never reach a TV, whatever is in the database.
+          items: items.filter((i) => i.media_id || isStoredItemUrlAllowed(i.url ?? '')).map((i) => ({
             id: i.id,
             type: i.media_id ? i.kind : 'url',
             name: i.original_name ?? i.url,
@@ -313,37 +357,20 @@ export function deviceRoutes(app: FastifyInstance): void {
 
     // Self-update check: current release metadata + signed download URL.
     scope.get('/api/device/apk-info', async (req, reply) => {
-      const expires = Math.floor(Date.now() / 1000) + SIGNED_URL_TTL_S;
+      const expires = stableExpiry(SIGNED_URL_TTL_S);
       return reply.send(await apkInfoForDevice(req.screenId!, expires));
     });
 
+    // A one-minute credential for opening the push WebSocket (see the handler below).
+    scope.post('/api/device/ws-ticket', async (req, reply) => {
+      const expiresInS = 60;
+      const ticket = signDownload('ws', req.screenId!, Math.floor(Date.now() / 1000) + expiresInS);
+      return reply.send({ ticket, expiresInS });
+    });
+
     scope.post('/api/device/heartbeat', async (req, reply) => {
-      const body = z
-        .object({
-          appVersion: z.string().max(50).optional(),
-          currentItem: z.string().max(200).nullish(),
-          storageFreeMb: z.number().int().nonnegative().optional(),
-          // Device telemetry - all optional so old player builds keep working.
-          batteryPct: z.number().int().min(0).max(100).nullish(),
-          ramFreeMb: z.number().int().nonnegative().nullish(),
-          ramTotalMb: z.number().int().nonnegative().nullish(),
-          cpuPct: z.number().int().min(0).max(100).nullish(),
-          wifiRssi: z.number().int().min(-127).max(0).nullish(),
-          uptimeS: z.number().int().nonnegative().nullish(),
-          // Reported by the device, unlike `ip` which is whatever hop reached us.
-          localIp: z.string().max(45).nullish(), // 45 = longest IPv6 text form
-          // Proof-of-play batch: items shown since the last successful heartbeat.
-          plays: z
-            .array(z.object({ name: z.string().min(1).max(300), at: z.string().datetime() }))
-            .max(500)
-            .default([]),
-          // Last uncaught exception since the previous confirmed report, if any.
-          lastCrashAt: z.string().datetime().nullish(),
-          lastCrashMessage: z.string().max(500).nullish(),
-          // Why media could not be downloaded, if it could not.
-          mediaError: z.string().max(500).nullish(),
-        })
-        .parse(req.body ?? {});
+      // Over-long free text is clipped, not rejected (see lib/heartbeat.ts).
+      const body = heartbeatSchema.parse(req.body ?? {});
       await query(
         `UPDATE screens SET last_seen_at = now(), app_version = coalesce($2, app_version),
            ip = $3, current_item = $4, storage_free_mb = coalesce($5, storage_free_mb),
@@ -400,20 +427,39 @@ export function deviceRoutes(app: FastifyInstance): void {
   // ── WebSocket for instant push (token via query param; WS can't set headers) ──
 
   app.get('/api/device/ws', { websocket: true }, async (socket, req) => {
-    const { token } = z.object({ token: z.string() }).parse(req.query);
-    const claims = verifyToken(token);
-    if (!claims || claims.typ !== 'device') {
+    // Two ways in. A TV on a current build trades its token for a one-minute
+    // ticket (POST /api/device/ws-ticket, token in a header) and connects with
+    // that, so the long-lived credential never appears in a URL - and URLs end
+    // up in nginx access logs and the app's own request log. The raw ?token= form
+    // remains only so TVs on older builds keep running until they update.
+    const { token, ticket } = z
+      .object({ token: z.string().optional(), ticket: z.string().optional() })
+      .parse(req.query);
+    let screenId: string | null = null;
+    let jti: string | null = null;
+    if (ticket) {
+      const subject = ticket.split('.')[0] ?? '';
+      if (verifyDownload('ws', ticket) && z.string().uuid().safeParse(subject).success) screenId = subject;
+    } else if (token) {
+      const claims = verifyToken(token);
+      if (claims && claims.typ === 'device') {
+        screenId = claims.sub;
+        jti = claims.jti;
+      }
+    }
+    if (!screenId) {
       socket.close(4001, 'unauthenticated');
       return;
     }
-    const { rows } = await query<{ id: string }>(
-      'SELECT id FROM screens WHERE id = $1 AND device_token_jti = $2',
-      [claims.sub, claims.jti],
-    );
+    // A ticket is only minted for a paired screen, but it outlives that for up to a
+    // minute - so confirm the screen is still paired (token form: still THIS token).
+    const { rows } = jti
+      ? await query<{ id: string }>('SELECT id FROM screens WHERE id = $1 AND device_token_jti = $2', [screenId, jti])
+      : await query<{ id: string }>('SELECT id FROM screens WHERE id = $1 AND device_token_jti IS NOT NULL', [screenId]);
     if (!rows[0]) {
       socket.close(4001, 'revoked');
       return;
     }
-    registerSocket(claims.sub, socket);
+    registerSocket(screenId, socket);
   });
 }

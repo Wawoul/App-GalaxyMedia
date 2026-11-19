@@ -19,7 +19,13 @@ export function reportRoutes(app: FastifyInstance): void {
       // screen's own clock, so a UTC bucket put an 08:00 play on an Australian
       // screen into the previous calendar day - "yesterday's plays" was then
       // wrong by a day for anything east of UTC.
-      `SELECT to_char(p.played_at AT TIME ZONE coalesce(s.timezone, 'Europe/London'), 'YYYY-MM-DD') AS day,
+      // Same fallback chain as lib/effectiveTimezone.ts: own zone, else the first group
+      // by name, else London.
+      `SELECT to_char(p.played_at AT TIME ZONE coalesce(
+                s.timezone,
+                (SELECT g.timezone FROM screen_group_members m JOIN screen_groups g ON g.id = m.group_id
+                 WHERE m.screen_id = s.id AND g.timezone IS NOT NULL ORDER BY g.name LIMIT 1),
+                'Europe/London'), 'YYYY-MM-DD') AS day,
               s.name AS screen_name, p.item_name,
               count(*)::int AS plays,
               max(p.played_at) AS last_played

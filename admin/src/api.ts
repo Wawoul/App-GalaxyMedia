@@ -33,7 +33,9 @@ export function clearSession(): void {
 // perfectly valid new session.
 let refreshInFlight: Promise<boolean> | null = null;
 
-async function doRefresh(): Promise<boolean> {
+async function rotateRefreshToken(): Promise<boolean> {
+  // Read INSIDE the lock: another tab may have rotated the stored token while we
+  // waited, and we must present the current one, not the one we saw earlier.
   const refreshToken = getRefreshToken();
   if (!refreshToken) return false;
   const res = await fetch('/api/auth/refresh', {
@@ -48,6 +50,17 @@ async function doRefresh(): Promise<boolean> {
   const data = (await res.json()) as { accessToken: string; refreshToken: string };
   setSession(data.accessToken, data.refreshToken);
   return true;
+}
+
+// Every tab shares ONE stored refresh token. The in-flight sharing above only
+// helps within a tab; restoring several tabs at once (a browser reopening its
+// windows) made them all rotate the same token simultaneously. A browser-wide
+// lock makes them take turns instead, each using the token the last one stored.
+async function doRefresh(): Promise<boolean> {
+  if (typeof navigator !== 'undefined' && navigator.locks) {
+    return navigator.locks.request('gm-refresh', rotateRefreshToken);
+  }
+  return rotateRefreshToken();
 }
 
 function tryRefresh(): Promise<boolean> {

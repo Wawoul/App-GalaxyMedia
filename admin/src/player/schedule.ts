@@ -1,30 +1,38 @@
 /**
- * Schedule resolution for the web player.
- * COPY of server/src/lib/schedule.ts (which owns the tests) - keep in sync,
- * like the Kotlin twin in the Android app.
+ * Schedule resolution (SPEC §5) - the single source of truth for "what should
+ * this screen play right now". The Kotlin player implements the same rules for
+ * offline dayparting; keep the two in sync.
+ *
+ * Rules, in order:
+ *  1. Only assignments whose date range / days-of-week / time window match "now"
+ *     (in the screen's timezone) are candidates. NULL fields mean "always".
+ *  2. Highest `priority` wins.
+ *  3. Tie-break: direct-to-screen beats group.
+ *  4. Tie-break: newest created wins.
  */
 
 export interface ScheduleEntry {
   id: string;
-  playlistId: string | null;
-  blackout?: boolean;
-  isDirect: boolean;
-  createdAt: string;
+  playlistId: string | null; // null for blackout entries
+  blackout?: boolean; // Black Screen: render black instead of content
+  isDirect: boolean; // screen-targeted (vs group)
+  createdAt: string; // ISO
   priority: number;
   daysOfWeek: number[] | null; // 0=Sun … 6=Sat
-  startTime: string | null; // "HH:MM[:SS]"
+  startTime: string | null; // "HH:MM" or "HH:MM:SS"
   endTime: string | null;
   startDate: string | null; // "YYYY-MM-DD"
   endDate: string | null;
-  weekInterval?: number;
+  weekInterval?: number; // 1 = weekly (default), 2 = bi-weekly, … anchored to startDate
 }
 
 export interface LocalNow {
-  dateStr: string;
-  dayOfWeek: number;
-  minutes: number;
+  dateStr: string; // "YYYY-MM-DD" in screen tz
+  dayOfWeek: number; // 0=Sun … 6=Sat in screen tz
+  minutes: number; // minutes since local midnight
 }
 
+/** Current wall-clock in an IANA timezone. */
 export function nowInTimezone(tz: string, at: Date = new Date()): LocalNow {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: tz,
@@ -41,6 +49,7 @@ export function nowInTimezone(tz: string, at: Date = new Date()): LocalNow {
   return {
     dateStr: `${get('year')}-${get('month')}-${get('day')}`,
     dayOfWeek: dows.indexOf(get('weekday')),
+    // "24" can appear for midnight with hour12:false - normalize.
     minutes: (Number(get('hour')) % 24) * 60 + Number(get('minute')),
   };
 }
@@ -50,34 +59,59 @@ function toMinutes(time: string): number {
   return h * 60 + m;
 }
 
+/** Whole days between two "YYYY-MM-DD" strings (b − a). */
 function daysBetween(a: string, b: string): number {
   return Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000);
 }
 
+/** "YYYY-MM-DD" minus one calendar day. */
+function previousDateStr(dateStr: string): string {
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
 export function isActive(entry: ScheduleEntry, now: LocalNow): boolean {
-  if (entry.startDate && now.dateStr < entry.startDate) return false;
-  if (entry.endDate && now.dateStr > entry.endDate) return false;
-  if (entry.daysOfWeek && entry.daysOfWeek.length > 0 && !entry.daysOfWeek.includes(now.dayOfWeek)) {
+  const hasWindow = !!(entry.startTime && entry.endTime);
+  const start = hasWindow ? toMinutes(entry.startTime!) : 0;
+  const end = hasWindow ? toMinutes(entry.endTime!) : 0;
+  const overnight = hasWindow && start > end;
+  // The early-morning tail of an overnight window (e.g. 00:30 for a 22:00-02:00
+  // slot) still belongs to the PREVIOUS calendar day's date/days-of-week/interval,
+  // since that's the day the window actually started on - otherwise a
+  // Monday-only 22:00-02:00 slot would stop being "active" the instant the
+  // clock ticks past midnight into Tuesday.
+  const inOvernightTail = overnight && now.minutes < end;
+  const effectiveDateStr = inOvernightTail ? previousDateStr(now.dateStr) : now.dateStr;
+  const effectiveDayOfWeek = inOvernightTail ? (now.dayOfWeek + 6) % 7 : now.dayOfWeek;
+
+  if (entry.startDate && effectiveDateStr < entry.startDate) return false;
+  if (entry.endDate && effectiveDateStr > entry.endDate) return false;
+  if (entry.daysOfWeek && entry.daysOfWeek.length > 0 && !entry.daysOfWeek.includes(effectiveDayOfWeek)) {
     return false;
   }
   const interval = entry.weekInterval ?? 1;
-  if (interval > 1 && entry.startDate) {
-    const days = daysBetween(entry.startDate, now.dateStr);
-    const weeks = Math.floor(days / 7);
-    if (days >= 0 && weeks % interval !== 0) return false;
+  if (interval > 1) {
+    // Anchor the cycle to the week containing startDate; without one, treat as weekly.
+    if (entry.startDate) {
+      const days = daysBetween(entry.startDate, effectiveDateStr);
+      // Align weeks to the anchor's weekday so week 0 starts at the anchor.
+      const weeks = Math.floor(days / 7);
+      if (days >= 0 && weeks % interval !== 0) return false;
+    }
   }
-  if (entry.startTime && entry.endTime) {
-    const start = toMinutes(entry.startTime);
-    const end = toMinutes(entry.endTime);
-    if (start <= end) {
+  if (hasWindow) {
+    if (!overnight) {
       if (now.minutes < start || now.minutes >= end) return false;
     } else {
+      // Window crosses midnight (e.g. 22:00-02:00).
       if (now.minutes < start && now.minutes >= end) return false;
     }
   }
   return true;
 }
 
+/** Pick the entry that should play now, or null for "nothing scheduled". */
 export function resolveActive<T extends ScheduleEntry>(entries: T[], now: LocalNow): T | null {
   let best: T | null = null;
   for (const entry of entries) {

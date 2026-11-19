@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 // Test env (DB URL, keys) comes from vitest.config.ts.
-import { decrypt, encrypt, generatePairingCode, signDownload, verifyDownload } from './crypto.js';
+import { decrypt, encrypt, generatePairingCode, signDownload, stableExpiry, verifyDownload } from './crypto.js';
 
 describe('encryption', () => {
   it('round-trips and produces distinct ciphertexts (fresh IV each time)', () => {
@@ -43,6 +43,34 @@ describe('signed download URLs', () => {
     expect(verifyDownload(media, expired)).toBe(false);
     expect(verifyDownload(media, 'screen-1.9999999999.forged')).toBe(false);
     expect(verifyDownload(media, 'garbage')).toBe(false);
+  });
+
+  it('hands out the same expiry (so the same URL) all through a bucket', () => {
+    // Every manifest used to carry a brand-new token, so the URL text changed each
+    // minute: browsers refetched whole videos and the web player restarted them.
+    const ttl = 45 * 60;
+    const bucket = 15 * 60;
+    const t0 = Date.UTC(2026, 0, 1, 12, 0, 1);
+    const first = stableExpiry(ttl, bucket, t0);
+    expect(stableExpiry(ttl, bucket, t0 + 60_000)).toBe(first);
+    expect(stableExpiry(ttl, bucket, t0 + 13 * 60_000)).toBe(first);
+    expect(stableExpiry(ttl, bucket, t0 + 15 * 60_000)).toBeGreaterThan(first);
+  });
+
+  it('never leaves less than ttl minus one bucket of life, and never exceeds ttl', () => {
+    const ttl = 45 * 60;
+    const bucket = 15 * 60;
+    for (let offset = 0; offset < 3 * bucket; offset += 7) {
+      const now = Date.UTC(2026, 0, 1, 12, 0, 0) + offset * 1000;
+      const remaining = stableExpiry(ttl, bucket, now) - now / 1000;
+      expect(remaining).toBeGreaterThanOrEqual(ttl - bucket);
+      expect(remaining).toBeLessThanOrEqual(ttl);
+    }
+  });
+
+  it('produces tokens that still verify', () => {
+    const exp = stableExpiry(45 * 60);
+    expect(verifyDownload(media, signDownload(media, 'screen-1', exp))).toBe(true);
   });
 
   it('signs the literal expiry field, not its numeric value', () => {

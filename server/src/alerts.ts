@@ -7,6 +7,8 @@ import nodemailer from 'nodemailer';
 import { config } from './config.js';
 import { query } from './db/pool.js';
 import { decrypt, encrypt } from './lib/crypto.js';
+import { alertOutcome } from './lib/alertOutcome.js';
+import { pruneExpiredRows, wipeDeliveredPairingTokens } from './lib/housekeeping.js';
 
 export interface AlertSettings {
   smtpHost: string;
@@ -125,7 +127,10 @@ export async function sendAlert(
 
 // ── Offline detection loop ───────────────────────────────────────────────────
 
-async function checkOfflineScreens(): Promise<void> {
+type SendAlert = typeof sendAlert;
+
+/** Exported with an injectable sender so the retry behaviour can be tested. */
+export async function checkOfflineScreens(send: SendAlert = sendAlert): Promise<void> {
   const s = await getAlertSettings();
   // A company relying solely on its own alert_emails (set in the Companies tab,
   // with no global recipients) is a supported config - only require the SMTP
@@ -150,16 +155,29 @@ async function checkOfflineScreens(): Promise<void> {
      RETURNING s.id, s.name, s.last_seen_at, c.name AS company_name, c.alert_emails AS company_alert_emails`,
     [s.offlineAlertMinutes],
   );
-  for (const screen of rows) {
-    void sendAlert(
-      `Screen offline: ${screen.name} (${screen.company_name})`,
-      `"${screen.name}" at ${screen.company_name} has sent no heartbeat for over ` +
-        `${s.offlineAlertMinutes} minutes (last seen ${screen.last_seen_at?.toISOString() ?? 'unknown'}).\n` +
-        `It keeps playing cached content, but check power/network when possible.\n` +
-        `Dashboard: ${config.BASE_URL}`,
-      screen.company_alert_emails,
-    );
-  }
+  // The screen was marked as alerted by the UPDATE above, BEFORE sending, so two
+  // overlapping runs can never both send. The cost was that a failed send (SMTP
+  // briefly down) left it marked and nobody was ever told. So when every configured
+  // channel failed, un-mark it and the next pass tries again.
+  const unmark = (id: string) =>
+    query('UPDATE screens SET offline_alerted_at = NULL WHERE id = $1 AND offline_alerted_at IS NOT NULL', [id]);
+  await Promise.all(
+    rows.map(async (screen) => {
+      try {
+        const result = await send(
+          `Screen offline: ${screen.name} (${screen.company_name})`,
+          `"${screen.name}" at ${screen.company_name} has sent no heartbeat for over ` +
+            `${s.offlineAlertMinutes} minutes (last seen ${screen.last_seen_at?.toISOString() ?? 'unknown'}).\n` +
+            `It keeps playing cached content, but check power/network when possible.\n` +
+            `Dashboard: ${config.BASE_URL}`,
+          screen.company_alert_emails,
+        );
+        if (alertOutcome(result) === 'failed') await unmark(screen.id);
+      } catch {
+        await unmark(screen.id).catch(() => {});
+      }
+    }),
+  );
 }
 
 /** Called from the heartbeat handler when a previously-alerted screen reports in. */
@@ -191,6 +209,9 @@ export function startAlertLoop(log: {
   // so a crash-looping service would re-run a large DELETE over and over.
   let lastCleanup = Date.now();
   setInterval(() => {
+    // A screen that has reported in no longer needs the device token parked on its
+    // pairing request - take it out of the database promptly.
+    void wipeDeliveredPairingTokens().catch((err) => log.error(err, 'pairing token wipe failed'));
     // Errors were swallowed silently here, which meant a persistently failing
     // alert query left the MSP with no offline alerts at all and nothing
     // anywhere to say so - the worst way for a monitoring feature to fail.
@@ -201,6 +222,7 @@ export function startAlertLoop(log: {
       void query(`DELETE FROM proof_of_play WHERE played_at < now() - interval '90 days'`).catch(
         (err) => log.error(err, 'proof-of-play retention cleanup failed'),
       );
+      void pruneExpiredRows().catch((err) => log.error(err, 'expired-row cleanup failed'));
     }
   }, 60_000).unref();
   log.info('offline alert loop started (channels configured in the Alerts tab)');

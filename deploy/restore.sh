@@ -43,6 +43,23 @@ MSG
 read -rp "Type RESTORE to continue: " confirm
 [[ "$confirm" == "RESTORE" ]] || { echo "aborted"; exit 1; }
 
+echo "==> Safety copy of the CURRENT database"
+# If this turns out to be the wrong backup, or the restore fails half way, today's data
+# would otherwise be gone for good - the next step drops the database. Take the copy
+# first, and refuse to go on without it.
+SAFETY=""
+if sudo -u postgres psql -lqt | cut -d'|' -f1 | grep -qw galaxy_media; then
+  mkdir -p /var/backups/galaxy-media
+  chmod 700 /var/backups/galaxy-media
+  SAFETY="/var/backups/galaxy-media/pre-restore-$(date +%Y%m%d-%H%M%S).dump"
+  if ! sudo -u postgres pg_dump -Fc galaxy_media > "$SAFETY"; then
+    rm -f "$SAFETY"
+    echo "ERROR: could not take a safety copy of the current database - aborting before changing anything." >&2
+    exit 1
+  fi
+  echo "   saved to $SAFETY"
+fi
+
 echo "==> Stopping the API"
 systemctl stop galaxy-api || true
 
@@ -56,7 +73,34 @@ sudo -u postgres psql -q -c "CREATE DATABASE galaxy_media OWNER $APP_USER"
 sudo -u postgres psql -q -d galaxy_media -c "CREATE EXTENSION IF NOT EXISTS citext"
 sudo -u postgres psql -q -d galaxy_media -c "CREATE EXTENSION IF NOT EXISTS pgcrypto"
 # --no-owner: the dump may name a role that differs on this host.
-sudo -u postgres pg_restore --no-owner -d galaxy_media "$SRC/galaxy_media.dump"
+#
+# pg_restore exits non-zero for harmless warnings as well (an extension that already
+# exists, say). Under `set -e` that used to abort the script RIGHT HERE - after the old
+# database had been dropped, with the API stopped and the media and config not yet
+# restored. So the exit status alone cannot decide success: judge by whether the result
+# is a usable database.
+RC=0
+sudo -u postgres pg_restore --no-owner -d galaxy_media "$SRC/galaxy_media.dump" || RC=$?
+if ! sudo -u postgres psql -d galaxy_media -tAc "SELECT count(*) FROM users" >/dev/null 2>&1; then
+  echo "ERROR: the restored database is not usable (pg_restore exit status $RC)." >&2
+  if [[ -n "$SAFETY" && -s "$SAFETY" ]]; then
+    echo "Putting the previous database back from $SAFETY ..." >&2
+    sudo -u postgres psql -q -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='galaxy_media' AND pid <> pg_backend_pid()" >/dev/null || true
+    sudo -u postgres psql -q -c "DROP DATABASE IF EXISTS galaxy_media"
+    sudo -u postgres psql -q -c "CREATE DATABASE galaxy_media OWNER $APP_USER"
+    sudo -u postgres psql -q -d galaxy_media -c "CREATE EXTENSION IF NOT EXISTS citext"
+    sudo -u postgres psql -q -d galaxy_media -c "CREATE EXTENSION IF NOT EXISTS pgcrypto"
+    sudo -u postgres pg_restore --no-owner -d galaxy_media "$SAFETY" || true
+    systemctl start galaxy-api || true
+    echo "The previous database was restored; nothing was changed." >&2
+  else
+    echo "There was no previous database to put back." >&2
+  fi
+  exit 1
+fi
+if [[ $RC -ne 0 ]]; then
+  echo "note: pg_restore reported warnings (exit status $RC) but the database is usable"
+fi
 
 if [[ -d "$SRC/media" ]]; then
   echo "==> Restoring media"
