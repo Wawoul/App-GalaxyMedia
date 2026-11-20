@@ -1,0 +1,40 @@
+/* Playlist item list (Playlists page). Built from the portal's tokens. */
+.pl-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.pl-head h3 { margin: 0 0 2px; font-size: 17px; }
+tr.row-active td { background: var(--accent-soft); }
+
+.pl-items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.pl-items li {
+  display: grid; grid-template-columns: 26px 96px minmax(0, 1fr) auto auto; align-items: center; gap: 14px;
+  padding: 10px 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.pl-items li:hover { border-color: var(--border-strong); }
+.pl-items li.off { opacity: 0.55; }
+.pl-num { color: var(--text-muted); font-size: 13px; font-variant-numeric: tabular-nums; text-align: center; }
+.pl-thumb {
+  width: 96px; aspect-ratio: 16 / 9; display: grid; place-items: center; overflow: hidden;
+  background: var(--surface-3); border-radius: var(--radius-sm); color: var(--text-muted); font-size: 18px;
+}
+.pl-thumb img { width: 100%; height: 100%; object-fit: contain; }
+.pl-main { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.pl-name { display: flex; align-items: center; gap: 8px; min-width: 0; font-weight: 500; }
+.pl-name > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl-dur label { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; flex-wrap: wrap; }
+.pl-dur input[type="number"] { width: 78px; padding: 5px 8px; }
+.pl-opts { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.pl-check { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.badge.live { background: var(--accent-soft); color: var(--accent); }
+.pl-actions { display: flex; gap: 6px; align-items: center; }
+.pl-actions button { min-width: 34px; }
+
+.pl-empty {
+  display: grid; justify-items: center; gap: 8px; padding: 36px 16px; text-align: center;
+  border: 1px dashed var(--border-strong); border-radius: var(--radius); color: var(--text-muted);
+}
+.pl-empty b { color: var(--text); font-size: 15px; }
+
+@media (max-width: 900px) {
+  .pl-items li { grid-template-columns: 26px 72px minmax(0, 1fr); }
+  .pl-thumb { width: 72px; }
+  .pl-opts, .pl-actions { grid-column: 2 / -1; flex-direction: row; flex-wrap: wrap; }
+}

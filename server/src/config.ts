@@ -32,6 +32,9 @@ const schema = z.object({
   // (single-container Docker deployments; the LXC install uses nginx instead).
   ADMIN_DIR: z.string().optional(),
   MAX_UPLOAD_MB: z.coerce.number().int().positive().default(512),
+  // Large files are uploaded in pieces of this size so no single request approaches a proxy's body
+  // cap (Cloudflare's free plan stops a request at 100MB). Must stay below that cap.
+  UPLOAD_CHUNK_MB: z.coerce.number().int().min(1).max(90).default(25),
   // Per-company storage cap in MB. 0 = unlimited (the default, so nothing changes
   // until an operator opts in).
   COMPANY_QUOTA_MB: z.coerce.number().int().min(0).default(0),

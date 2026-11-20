@@ -60,6 +60,21 @@ describe('isAllowedItemUrl', () => {
     expect(isAllowedItemUrl('https://notsignage.example.com/', OWN)).toBe(true);
   });
 
+  it("allows exactly one page on the server's own host: the live slide page", () => {
+    const live = 'https://signage.example.com/live.html?d=11111111-1111-4111-8111-111111111111&s=abc';
+    expect(isAllowedItemUrl(live, OWN)).toBe(true);
+    // Not the page without its slide and signature, not other paths, not other hosts' lookalikes.
+    for (const url of [
+      'https://signage.example.com/live.html',
+      'https://signage.example.com/live.html?d=11111111-1111-4111-8111-111111111111',
+      'https://signage.example.com/index.html?d=1&s=2',
+      'https://signage.example.com/live.html/../index.html?d=1&s=2',
+      'https://signage.example.com/api/live?d=1&s=2',
+    ]) {
+      expect(isAllowedItemUrl(url, OWN), url).toBe(false);
+    }
+  });
+
   it('refuses anything over 2000 characters', () => {
     const prefix = 'https://example.com/'; // 20 chars
     expect(isAllowedItemUrl(prefix + 'a'.repeat(2000 - prefix.length), OWN)).toBe(true);

@@ -12,9 +12,12 @@ import { sweepOrphanedUploads } from './lib/importJobs.js';
 import { config } from './config.js';
 import { migrate } from './db/migrate.js';
 import { authRoutes } from './routes/auth.js';
+import { chunkedUploadRoutes } from './routes/chunkedUploads.js';
 import { companyRoutes } from './routes/companies.js';
+import { designRoutes } from './routes/designs.js';
 import { deviceRoutes } from './routes/device.js';
 import { layoutRoutes } from './routes/layouts.js';
+import { liveRoutes } from './routes/live.js';
 import { mediaRoutes } from './routes/media.js';
 import { playlistRoutes } from './routes/playlists.js';
 import { reportRoutes } from './routes/reports.js';
@@ -57,6 +60,8 @@ export async function buildServer(): Promise<FastifyInstance> {
   });
   // Device screenshot uploads arrive as a raw JPEG body.
   app.addContentTypeParser('image/jpeg', { parseAs: 'buffer' }, (_req, body, done) => done(null, body));
+  // Pieces of a chunked upload arrive as a raw body that is streamed straight to disk, never buffered.
+  app.addContentTypeParser('application/octet-stream', (_req, payload, done) => done(null, payload));
 
   // Single-container mode: serve the built admin UI (nginx does this on LXC installs).
   if (config.ADMIN_DIR) {
@@ -99,6 +104,9 @@ export async function buildServer(): Promise<FastifyInstance> {
   await app.register(async (s) => reportRoutes(s));
   systemRoutes(app);
   mediaRoutes(app);
+  chunkedUploadRoutes(app);
+  designRoutes(app);
+  liveRoutes(app); // public (signed link), deliberately outside the login scope
   deviceRoutes(app);
   screenshotRoute(app); // token-in-query auth; must stay outside screenRoutes' requireUser scope
 

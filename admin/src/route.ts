@@ -5,11 +5,11 @@
  */
 export type Page =
   | 'screens' | 'media' | 'playlists' | 'layouts' | 'schedule' | 'reports'
-  | 'companies' | 'users' | 'alerts' | 'system' | 'account';
+  | 'companies' | 'users' | 'alerts' | 'system' | 'account' | 'designer';
 
 export const PAGES: readonly Page[] = [
   'screens', 'media', 'playlists', 'layouts', 'schedule', 'reports',
-  'companies', 'users', 'alerts', 'system', 'account',
+  'companies', 'users', 'alerts', 'system', 'account', 'designer',
 ];
 
 export const DEFAULT_PAGE: Page = 'screens';

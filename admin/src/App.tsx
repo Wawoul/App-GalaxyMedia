@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { api, clearSession, restoreSession, SESSION_EXPIRED_EVENT } from './api';
 import { Account } from './pages/Account';
 import { Alerts } from './pages/Alerts';
@@ -18,16 +18,20 @@ import { hashFor, pageFromHash, type Page } from './route';
 import { applyTheme, getTheme, nextTheme, type ThemeChoice } from './theme';
 import type { Company, Me } from './types';
 
+// The slide designer (canvas library + bundled fonts) is a separate chunk: most visits never open it.
+const Designer = lazy(() => import('./designer/Designer'));
+
 export function App() {
   const [ready, setReady] = useState(false);
   const [me, setMe] = useState<Me | null>(null);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [companyId, setCompanyId] = useState<string>('');
   const [page, setPageState] = useState<Page>(() => pageFromHash(window.location.hash));
+  const [hash, setHash] = useState(window.location.hash);
   const [navOpen, setNavOpen] = useState(false);
   const [theme, setTheme] = useState<ThemeChoice>(getTheme);
   useEffect(() => {
-    const onHash = () => { setPageState(pageFromHash(window.location.hash)); setNavOpen(false); };
+    const onHash = () => { setPageState(pageFromHash(window.location.hash)); setHash(window.location.hash); setNavOpen(false); };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
@@ -81,8 +85,9 @@ export function App() {
   };
 
   const titles: Record<Page, string> = {
-    screens: 'Screens', media: 'Media', playlists: 'Playlists', layouts: 'Layouts', schedule: 'Schedule',
+    screens: 'Screens', media: 'Library', playlists: 'Playlists', layouts: 'Layouts', schedule: 'Schedule',
     reports: 'Reports', companies: 'Companies', users: 'Users', alerts: 'Alerts', system: 'System', account: 'Account',
+    designer: 'Slide designer',
   };
   const link = (p: Page, icon: IconName) => (
     <a key={p} className="nav-item" href={hashFor(p)} aria-current={page === p ? 'page' : undefined}>
@@ -153,6 +158,11 @@ export function App() {
         {page === 'alerts' && <Alerts />}
         {page === 'system' && <System />}
         {page === 'account' && <Account forced={false} onChanged={() => void loadSession()} />}
+        {page === 'designer' && company && (
+          <Suspense fallback={<div className="dz-root dz-center muted">Opening the designer…</div>}>
+            <Designer company={company} canEdit={canEdit} hash={hash} />
+          </Suspense>
+        )}
         {!company && !['companies', 'users', 'alerts', 'system'].includes(page) && (
           <div className="panel muted">
             No companies yet.{' '}

@@ -1,0 +1,85 @@
+/* Library grid (Library page + the "Add from library" picker). Built from the portal's tokens. */
+.lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 14px; }
+.lib-grid-sm { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 10px; }
+
+.lib-card {
+  position: relative; display: flex; flex-direction: column; min-width: 0; text-align: left;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+  box-shadow: var(--shadow-1); transition: border-color var(--ease), box-shadow var(--ease), transform var(--ease);
+}
+.lib-card:hover { border-color: var(--border-strong); box-shadow: var(--shadow-2); }
+button.lib-card { padding: 0; color: var(--text); font: inherit; cursor: pointer; }
+button.lib-card:hover:not(:disabled) { background: var(--surface); transform: none; }
+.lib-card:focus-within { box-shadow: var(--ring); }
+
+.lib-thumb {
+  position: relative; display: block; width: 100%; aspect-ratio: 4 / 3; overflow: hidden;
+  background: var(--surface-3); border: 0; padding: 0; cursor: zoom-in; border-radius: 0;
+}
+button.lib-thumb:hover:not(:disabled) { background: var(--surface-3); }
+.lib-thumb img, .lib-thumb .lib-vid { width: 100%; height: 100%; object-fit: cover; display: block; }
+.lib-badge {
+  position: absolute; left: 8px; bottom: 8px; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600;
+  background: rgba(10, 14, 24, 0.72); color: #fff; backdrop-filter: blur(3px);
+}
+.lib-badge.ok { background: var(--ok); }
+.lib-badge + .lib-badge { left: auto; right: 8px; }
+
+.lib-meta { padding: 9px 12px 11px; min-width: 0; }
+.lib-name { display: block; padding: 0; font-weight: 600; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-pick .lib-name, .lib-folder .lib-name { padding: 9px 12px 11px; }
+.lib-sub { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
+.lib-menu { position: absolute; top: 6px; right: 6px; opacity: 0; transition: opacity var(--ease); }
+.lib-card:hover .lib-menu, .lib-card:focus-within .lib-menu, .lib-menu:has([aria-expanded="true"]) { opacity: 1; }
+.lib-menu .icon-btn { background: rgba(10, 14, 24, 0.6); color: #fff; backdrop-filter: blur(3px); }
+.lib-menu .icon-btn:hover:not(:disabled) { background: rgba(10, 14, 24, 0.85); color: #fff; }
+@media (hover: none) { .lib-menu { opacity: 1; } }
+
+.lib-folder-art { display: grid; place-items: center; aspect-ratio: 4 / 3; color: var(--accent); background: var(--accent-soft); }
+button.lib-folder-art { width: 100%; border: 0; border-radius: 0; padding: 0; cursor: pointer; }
+button.lib-folder-art:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 24%, var(--surface)); color: var(--accent); }
+.lib-folder-card { cursor: pointer; }
+.lib-folder-card .lib-folder-art { cursor: pointer; }
+
+.lib-pick.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.lib-check { position: absolute; top: 8px; right: 8px; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: var(--accent-contrast); }
+
+.lib-crumbs { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; font-size: 14px; }
+.lib-crumbs .crumb { background: none; border: 0; padding: 2px 4px; color: var(--accent); cursor: pointer; font: inherit; }
+.lib-crumbs .crumb:hover:not(:disabled) { background: none; text-decoration: underline; }
+
+/* .btn on a link needs what the global button rule gives real buttons */
+a.btn {
+  display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; font-weight: 500; cursor: pointer;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); text-decoration: none; color: var(--text);
+  background: var(--surface-2);
+}
+a.btn:hover { background: var(--surface-3); }
+a.btn.btn-sm { padding: 5px 10px; font-size: 13px; }
+a.btn.btn-primary { color: var(--accent-contrast); background: var(--accent); border-color: transparent; }
+a.btn.btn-primary:hover { background: var(--accent-hover); }
+.lib-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.lib-actions .btn { flex: 1 1 140px; justify-content: center; padding: 11px 14px; font-weight: 500; }
+.lib-progress { display: flex; align-items: center; gap: 10px; padding: 10px 14px; margin-bottom: 14px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); font-size: 13px; }
+.lib-progress progress { flex: 1; max-width: 320px; }
+
+/* drag-and-drop overlay */
+.lib-drop { position: relative; }
+.lib-drop.over::after {
+  content: 'Drop files to upload'; position: absolute; inset: 0; z-index: 5; display: grid; place-items: center;
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface)); border: 2px dashed var(--accent); border-radius: var(--radius-lg);
+  color: var(--accent); font-size: 18px; font-weight: 600; pointer-events: none;
+}
+
+/* list view thumbnails */
+.lib-list-thumb { width: 64px; height: 40px; border-radius: 6px; overflow: hidden; background: var(--surface-3); display: block; }
+.lib-list-thumb img, .lib-list-thumb video { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.lib-preview { display: grid; place-items: center; background: var(--surface-3); border-radius: var(--radius); overflow: hidden; }
+.lib-preview img, .lib-preview video { max-width: 100%; max-height: 62vh; display: block; }
+
+/* picker */
+.lib-picker { display: flex; flex-direction: column; gap: 12px; min-height: 340px; max-height: 62vh; overflow-y: auto; }
+.lib-picker-bar { display: flex; flex-direction: column; gap: 8px; position: sticky; top: 0; z-index: 2; background: var(--surface); padding-bottom: 4px; }
+.lib-picker-count { margin-right: auto; font-size: 13px; }
+.lib-picker-bar .search { flex: none; width: 100%; }

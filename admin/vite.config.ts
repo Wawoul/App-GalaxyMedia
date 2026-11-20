@@ -1,5 +1,6 @@
 import react from '@vitejs/plugin-react';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 
 const { version } = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as {
@@ -19,5 +20,18 @@ export default defineConfig({
       '/api': { target: 'http://127.0.0.1:8080', changeOrigin: true, ws: true },
     },
   },
-  build: { outDir: 'dist', sourcemap: false },
+  build: {
+    outDir: 'dist',
+    sourcemap: false,
+    // The live slide page runs in the web views inside Android TVs, which can be years behind a
+    // desktop browser, so the build is lowered to syntax they understand.
+    target: 'es2017',
+    rollupOptions: {
+      // Two pages: the admin app, and the slide page the TVs open (/live.html).
+      input: {
+        main: fileURLToPath(new URL('./index.html', import.meta.url)),
+        live: fileURLToPath(new URL('./live.html', import.meta.url)),
+      },
+    },
+  },
 });

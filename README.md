@@ -60,6 +60,20 @@ Self-hosted digital signage for MSPs. No per-screen licensing, No "Freemium", No
   and in-page dialogs instead of browser popups. The dashboard's "now playing" uses the
   same schedule rules as the TVs, in the same timezone (the screen's own, else its
   group's, else Europe/London).
+- **Library and uploads**: the Library is a thumbnail grid (or list) of everything a
+  company owns, in folders, with drag-and-drop upload, import-by-link, search and filters;
+  playlists add from it through a picker. Files over 25 MB upload in 25 MB pieces
+  (`UPLOAD_CHUNK_MB`), so a proxy's per-request cap - Cloudflare's free plan stops any
+  request over 100 MB - never applies. A dropped connection resumes from where the server
+  got to, and the finished file is checked by content before it is stored. `MAX_UPLOAD_MB`
+  still caps the whole file.
+- **Slide designer**: build slides in the portal (text, shapes, library images, templates,
+  landscape or portrait). A designed slide is rendered in the browser to a PNG and plays
+  like any image, so it works offline and needs no player update. A slide with a **widget**
+  (clock, date, weather) or an **animation** is *live*: it plays as a web page the server
+  hosts (`/live.html`, opened through the existing web-page item and reachable only with the
+  slide's signed link), so the TV must be online while it shows. Weather comes from
+  Open-Meteo (no key). The editor's **Preview** plays the real live page.
 - **Security**: TLS by default (plain-HTTP mode available for trusted LAN-only
   installs), Argon2id + mandatory TOTP 2FA for MSP staff, encrypted secrets
   at rest, scoped revocable device tokens, signed download URLs, rate-limited device

@@ -40,7 +40,7 @@ export function mediaPath(companyId: string, mediaId: string, ext: string): stri
  * `maxBytes` is enforced here rather than trusted from a Content-Length, since
  * a remote server can lie about or omit it.
  */
-async function storeMediaStream(opts: {
+export async function storeMediaStream(opts: {
   companyId: string;
   userId: string;
   folderId: string | null;
@@ -72,34 +72,68 @@ async function storeMediaStream(opts: {
     },
   });
 
+  try {
+    await pipeline(opts.source, tap, createWriteStream(tmpFile, { flags: 'wx', mode: 0o640 }));
+  } catch (err) {
+    await unlink(tmpFile).catch(() => {});
+    throw err;
+  }
+  return finalizeStoredMedia({
+    companyId: opts.companyId,
+    userId: opts.userId,
+    folderId: opts.folderId,
+    originalName: opts.originalName,
+    tmpFile,
+    mediaId,
+    size,
+    sha256: hasher.digest('hex'),
+    head,
+  });
+}
+
+/**
+ * The last step of every upload path (single request or chunked): the file is fully on disk under
+ * a scratch name. Check what it really is (by content, not by name), give it its final name and
+ * record it. On any failure the file is removed, so a rejected upload never leaves an orphan.
+ */
+export async function finalizeStoredMedia(opts: {
+  companyId: string;
+  userId: string;
+  folderId: string | null;
+  originalName: string;
+  tmpFile: string;
+  mediaId: string;
+  size: number;
+  sha256: string;
+  head: Buffer;
+}): Promise<Record<string, unknown>> {
   // Set once the file has its final name, so a later failure can remove THAT file too.
   let storedPath: string | null = null;
   try {
-    await pipeline(opts.source, tap, createWriteStream(tmpFile, { flags: 'wx', mode: 0o640 }));
-    const sniffed = sniffMediaType(head);
+    const sniffed = sniffMediaType(opts.head);
     if (!sniffed) throw Object.assign(new Error('unsupported_type'), { statusCode: 415 });
 
-    storedPath = mediaPath(opts.companyId, mediaId, sniffed.ext);
-    await rename(tmpFile, storedPath);
+    storedPath = mediaPath(opts.companyId, opts.mediaId, sniffed.ext);
+    await rename(opts.tmpFile, storedPath);
     const { rows } = await query(
       `INSERT INTO media (id, company_id, kind, original_name, mime, size_bytes, sha256, folder_id, created_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING id, kind, original_name, mime, size_bytes, sha256, folder_id, created_at`,
       [
-        mediaId,
+        opts.mediaId,
         opts.companyId,
         sniffed.kind,
         opts.originalName,
         sniffed.mime,
-        size,
-        hasher.digest('hex'),
+        opts.size,
+        opts.sha256,
         opts.folderId,
         opts.userId,
       ],
     );
     return rows[0]!;
   } catch (err) {
-    await unlink(tmpFile).catch(() => {});
+    await unlink(opts.tmpFile).catch(() => {});
     // If the rename had already happened, the temp name no longer exists and the
     // file now lives under its final one - with no row pointing at it. Without this
     // every failed insert leaked a full-size orphan that nothing would ever collect.
@@ -109,7 +143,7 @@ async function storeMediaStream(opts: {
 }
 
 /** The reply for a refused upload: the company's own cap, or the shared disk running low. */
-function roomError(room: 'quota' | 'disk'): { status: number; error: string } {
+export function roomError(room: 'quota' | 'disk'): { status: number; error: string } {
   return room === 'quota'
     ? { status: 413, error: 'quota_exceeded' }
     : { status: 507, error: 'server_disk_full' };
@@ -314,6 +348,9 @@ export function mediaRoutes(app: FastifyInstance): void {
       if (body.name !== undefined) {
         // Display name only - the file on disk keeps its server-generated name.
         await query('UPDATE media SET original_name = $2 WHERE id = $1', [id, body.name]);
+        // A designed slide's name lives on its design too; keep them together (the designer
+        // writes "<name>.png" to the library, so strip that back off).
+        await query('UPDATE designs SET name = $2 WHERE media_id = $1', [id, body.name.replace(/\.png$/i, '').trim() || body.name]);
         notifyCompany(rows[0].company_id, { type: 'sync' }); // names appear in manifests
       }
       return reply.send({ ok: true });

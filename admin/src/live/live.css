@@ -1,0 +1,23 @@
+html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+#stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; overflow: hidden; visibility: hidden; }
+#stage.ready { visibility: visible; }
+#msg { position: fixed; left: 0; right: 0; bottom: 14px; text-align: center; color: rgba(255, 255, 255, 0.35); font: 14px sans-serif; }
+
+.o { position: absolute; transform-origin: 0 0; }
+.o > div { transform-origin: 50% 50%; }
+.t { white-space: pre-wrap; overflow-wrap: break-word; }
+.o svg { display: block; overflow: visible; }
+.o img { display: block; }
+
+/* entrance */
+@keyframes gm-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes gm-slide-left { from { opacity: 0; transform: translateX(-180px); } to { opacity: 1; transform: none; } }
+@keyframes gm-slide-right { from { opacity: 0; transform: translateX(180px); } to { opacity: 1; transform: none; } }
+@keyframes gm-slide-up { from { opacity: 0; transform: translateY(140px); } to { opacity: 1; transform: none; } }
+@keyframes gm-slide-down { from { opacity: 0; transform: translateY(-140px); } to { opacity: 1; transform: none; } }
+@keyframes gm-zoom { from { opacity: 0; transform: scale(0.6); } to { opacity: 1; transform: none; } }
+
+/* while showing */
+@keyframes gm-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.06); } }
+@keyframes gm-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-16px); } }
+@keyframes gm-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }

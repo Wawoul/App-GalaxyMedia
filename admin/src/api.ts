@@ -113,6 +113,114 @@ export async function restoreSession(): Promise<boolean> {
   return tryRefresh();
 }
 
+/** At or below this, a file is sent as one request; above it, in pieces (matches the server's piece size). */
+export const SINGLE_REQUEST_MAX_BYTES = 25 * 1024 * 1024;
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/**
+ * Add a file to the library. Small files go up in one request. Big ones are sent as a series of
+ * pieces (the size comes from the server), because whatever sits in front of the server - Cloudflare
+ * on the free plan - refuses any single request over 100MB. A piece that fails is retried, and after
+ * any doubt we ask the server how far it really got and carry on from there, so a flaky connection
+ * costs a few seconds, not the whole upload.
+ */
+export async function uploadMedia(
+  companyId: string,
+  file: File,
+  onProgress: (percent: number) => void,
+  folderId: string | null = null,
+): Promise<void> {
+  if (file.size <= SINGLE_REQUEST_MAX_BYTES) {
+    await uploadWithProgress(`/api/companies/${companyId}/media`, file, onProgress, folderId ? { folderId } : {});
+    return;
+  }
+  const session = await api<{ uploadId: string; chunkSize: number }>(`/api/companies/${companyId}/media/uploads`, {
+    body: { fileName: file.name, size: file.size, folderId },
+  });
+  try {
+    let offset = 0;
+    while (offset < file.size) {
+      const end = Math.min(offset + session.chunkSize, file.size);
+      offset = await sendPiece(session.uploadId, file.slice(offset, end), offset, (sent) =>
+        onProgress(Math.min(99, Math.round(((offset + sent) / file.size) * 100))));
+      onProgress(Math.min(99, Math.round((offset / file.size) * 100)));
+    }
+    // Checking the finished file (type, checksum) can take a few seconds on a big one.
+    await api(`/api/media/uploads/${session.uploadId}/complete`, { method: 'POST' });
+    onProgress(100);
+  } catch (err) {
+    // Free the half-written file now rather than waiting for the server's idle clean-up.
+    await api(`/api/media/uploads/${session.uploadId}`, { method: 'DELETE' }).catch(() => undefined);
+    throw err;
+  }
+}
+
+/** Sends one piece; resolves with how many bytes the server now holds (the offset of the next piece). */
+async function sendPiece(uploadId: string, data: Blob, offset: number, onSent: (bytes: number) => void): Promise<number> {
+  const end = offset + data.size;
+  let lastError: unknown = new ApiError(0, 'network error');
+  for (let attempt = 0; attempt < 5; attempt++) {
+    if (attempt > 0) {
+      await sleep(Math.min(8000, 1000 * 2 ** (attempt - 1)));
+      // After a failure we cannot know whether the server kept the piece: ask, rather than guess.
+      try {
+        const where = await api<{ received: number }>(`/api/media/uploads/${uploadId}`);
+        if (where.received === end) return end; // it did arrive; only the reply was lost
+        if (where.received !== offset) return where.received; // out of step: let the caller re-slice from here
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) throw new ApiError(404, 'the upload was abandoned by the server - start it again');
+        lastError = err;
+        continue;
+      }
+    }
+    const result = await putPiece(uploadId, data, offset, onSent);
+    if (result.kind === 'ok') return result.received;
+    if (result.kind === 'resync') return result.received; // the server is at a different offset than we thought
+    if (result.kind === 'fatal') throw result.error;
+    lastError = result.error;
+  }
+  throw lastError;
+}
+
+type PieceResult =
+  | { kind: 'ok'; received: number }
+  | { kind: 'resync'; received: number }
+  | { kind: 'retry'; error: unknown }
+  | { kind: 'fatal'; error: unknown };
+
+async function putPiece(uploadId: string, data: Blob, offset: number, onSent: (bytes: number) => void): Promise<PieceResult> {
+  const once = () =>
+    new Promise<{ status: number; body: { received?: number; error?: string } }>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('PUT', `/api/media/uploads/${uploadId}?offset=${offset}`);
+      if (accessToken) xhr.setRequestHeader('authorization', `Bearer ${accessToken}`);
+      xhr.setRequestHeader('content-type', 'application/octet-stream');
+      xhr.upload.onprogress = (e) => { if (e.lengthComputable) onSent(e.loaded); };
+      xhr.onload = () => {
+        let body: { received?: number; error?: string } = {};
+        try { body = JSON.parse(xhr.responseText) as typeof body; } catch { /* non-JSON error page from a proxy */ }
+        resolve({ status: xhr.status, body });
+      };
+      xhr.onerror = () => reject(new ApiError(0, 'network error'));
+      xhr.ontimeout = () => reject(new ApiError(0, 'timed out'));
+      xhr.send(data);
+    });
+  try {
+    let res = await once();
+    if (res.status === 401 && (await tryRefresh())) res = await once();
+    if (res.status === 200 && typeof res.body.received === 'number') return { kind: 'ok', received: res.body.received };
+    if (res.status === 409 && typeof res.body.received === 'number') return { kind: 'resync', received: res.body.received };
+    const error = new ApiError(res.status, res.body.error ?? `HTTP ${res.status}`);
+    // 4xx other than the cases above (too large, no permission, quota...) will not get better by retrying.
+    return res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429 && res.body.error !== 'chunk_failed'
+      ? { kind: 'fatal', error }
+      : { kind: 'retry', error };
+  } catch (error) {
+    return { kind: 'retry', error };
+  }
+}
+
 /**
  * Upload with progress callbacks (fetch can't report upload progress, so this
  * uses XHR). Keeps the page responsive during large video uploads.

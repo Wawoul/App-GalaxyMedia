@@ -26,7 +26,12 @@ export function isAllowedItemUrl(raw: string, ownHosts: readonly string[]): bool
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
   if (url.hostname === '') return false;
   if (url.username !== '' || url.password !== '') return false;
-  return !ownHosts.includes(url.hostname.toLowerCase());
+  if (ownHosts.includes(url.hostname.toLowerCase())) {
+    // The one page of our own that may be shown: the slide designer's live slides. It is static code that
+    // renders a single slide's data and nothing else (and sets its own content policy), unlike the admin app.
+    return url.pathname === '/live.html' && url.searchParams.has('d') && url.searchParams.has('s');
+  }
+  return true;
 }
 
 const OWN_HOSTS = [new URL(config.BASE_URL).hostname.toLowerCase()];
