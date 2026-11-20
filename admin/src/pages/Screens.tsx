@@ -42,7 +42,9 @@ function healthRows(s: Screen): [string, string][] {
     ['Media download', s.media_error ? `FAILING - ${s.media_error}` : 'ok'],
     ['IP address (device)', s.local_ip ?? '- (needs player 1.3.8+)'],
     ['Seen by server as', s.ip ?? '-'],
-    ['App version', s.app_version ?? '-'],
+    ['App version', s.app_version
+      ? hasUpdate(s) ? `${s.app_version} (update available: ${s.latest_app_version})` : `${s.app_version}${s.latest_app_version ? ' (latest)' : ''}`
+      : '-'],
     ['Last seen', s.last_seen_at ? new Date(s.last_seen_at).toLocaleString() : 'never'],
     [
       // Historical, not a live status: the server keeps the last reported crash
@@ -55,6 +57,21 @@ function healthRows(s: Screen): [string, string][] {
     ],
   ];
 }
+
+/** Dotted-number compare ("1.4.10" > "1.4.9"); non-numeric parts count as 0. */
+function compareVersions(a: string, b: string): number {
+  const pa = a.split('.').map((n) => parseInt(n, 10) || 0);
+  const pb = b.split('.').map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
+/** True when the server offers a newer player build than the one this TV reported. */
+const hasUpdate = (s: Screen): boolean =>
+  !!s.app_version && !!s.latest_app_version && compareVersions(s.latest_app_version, s.app_version) > 0;
 
 type Status = 'online' | 'offline' | 'unpaired';
 const statusOf = (s: Screen): Status => (!s.paired ? 'unpaired' : s.online ? 'online' : 'offline');
@@ -428,6 +445,8 @@ export function Screens({
                     <dt>Playlist</dt><dd>{s.playlist_name ?? 'none assigned'}</dd>
                     <dt>Now playing</dt><dd>{s.current_item ?? '-'}</dd>
                     <dt>Groups</dt><dd>{groupNames(s)}</dd>
+                    <dt>App version</dt>
+                    <dd>{s.app_version ? `v${s.app_version}` : '-'}{hasUpdate(s) && <> <span className="badge warn" title={`Version ${s.latest_app_version} is available on the server`}>v{s.latest_app_version} available</span></>}</dd>
                     <dt>Last seen</dt><dd title={s.last_seen_at ? new Date(s.last_seen_at).toLocaleString() : undefined}>{s.last_seen_at ? formatAgo(s.last_seen_at) : 'never'}</dd>
                   </dl>
                   {s.media_error && <span className="badge bad">Media download failing</span>}
@@ -455,7 +474,7 @@ export function Screens({
                         <td className="muted">{groupNames(s)}</td>
                         <td className="muted">{s.playlist_name ?? 'none assigned'}</td>
                         <td className="muted">{s.current_item ?? '-'}</td>
-                        <td className="muted">{s.app_version ?? '-'}</td>
+                        <td className="muted">{s.app_version ?? '-'}{hasUpdate(s) && <> <span className="badge warn" title={`Version ${s.latest_app_version} is available on the server`}>→ {s.latest_app_version}</span></>}</td>
                         <td className="muted" title={s.last_seen_at ? new Date(s.last_seen_at).toLocaleString() : undefined}>{s.last_seen_at ? formatAgo(s.last_seen_at) : 'never'}</td>
                         <td style={{ textAlign: 'right' }}><Menu items={menuFor(s)} label={`Actions for ${s.name}`} /></td>
                       </tr>

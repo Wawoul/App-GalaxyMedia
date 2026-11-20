@@ -182,9 +182,12 @@ export function screenRoutes(app: FastifyInstance): void {
     const companyIds = [...new Set(rows.map((s) => s.company_id as string))];
     const nowByScreen = await resolveNowPlaying(rows, companyIds);
     const expires = stableExpiry(SIGNED_URL_TTL_S);
+    // The release the server currently offers, so the dashboard can flag TVs running older builds.
+    const latestAppVersion = (await getApkRelease())?.versionName ?? null;
     return reply.send(
       rows.map((s) => ({
         ...s,
+        latest_app_version: latestAppVersion,
         playlist_name: nowByScreen.get(s.id as string) ?? null,
         screenshot_url: s.screenshot_at
           ? `/api/screens/${s.id}/screenshot?token=${signDownload(`shot-${s.id}`, req.principal!.id, expires)}`

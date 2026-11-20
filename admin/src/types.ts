@@ -36,6 +36,8 @@ export interface Screen {
   online: boolean;
   last_seen_at: string | null;
   app_version: string | null;
+  /** Version name of the APK the server currently offers (null when none is uploaded). */
+  latest_app_version?: string | null;
   ip: string | null;
   current_item: string | null;
   storage_free_mb: number | null;
